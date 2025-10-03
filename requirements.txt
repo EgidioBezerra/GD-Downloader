@@ -3,3 +3,4 @@ google-auth-httplib2
 google-auth-oauthlib
 selenium
 tqdm
+PyPDF2>=3.0.0

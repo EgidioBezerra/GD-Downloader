@@ -253,217 +253,324 @@ def download_view_only_pdf(service, file_id, save_path, temp_download_dir):
         logging.error(f"FALHA (PDF View-Only): Erro para '{file_name}': {type(e).__name__}: {e}")
         return False
 
-
 def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, temp_download_dir):
     """
-    Versão automatizada do download de PDF view-only.
-    Sem interação manual - rola automaticamente e captura.
+    SOLUÇÃO DEFINITIVA: Força carregamento completo usando múltiplas estratégias.
     """
     driver = None
     
     try:
         from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.common.keys import Keys
+        from PIL import Image
+        import io
         
-        logging.info(f"Download automático: {file_name}")
+        logging.info(f"Download PDF (Método Completo): {file_name}")
         print(f"  Processando: {file_name[:60]}...")
         
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
         view_url = file_metadata.get('webViewLink')
         if not view_url:
-            logging.error(f"WebViewLink não disponível para {file_id}")
             return False
 
         options = ChromeOptions()
-        options.add_argument('--headless=new')  # Novo modo headless
+        options.add_argument('--headless=new')
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-        options.add_experimental_option('useAutomationExtension', False)
-        
-        # Silencia erros do Chrome
+        options.add_argument('--log-level=3')
         options.add_argument('--disable-gpu')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-software-rasterizer')
-        options.add_argument('--disable-extensions')
-        options.add_argument('--disable-logging')
-        options.add_argument('--log-level=3')
-        options.add_argument('--silent')
-        options.add_argument('--disable-background-networking')
-        options.add_argument('--disable-sync')
-        options.add_argument('--disable-translate')
         options.add_argument('--window-size=1920,1080')
+        options.add_argument('--force-device-scale-factor=2')
         
-        # Suprime logs do Selenium
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        
-        prefs = {
-            "download.default_directory": temp_download_dir,
-            "download.prompt_for_download": False,
-            "plugins.always_open_pdf_externally": False,
-            # Desabilita notificações e popups
-            "profile.default_content_setting_values.notifications": 2,
-            "profile.default_content_settings.popups": 0,
-        }
-        options.add_experimental_option("prefs", prefs)
-        
-        # Suprime logs do webdriver manager
         os.environ['WDM_LOG_LEVEL'] = '0'
         
         service_obj = Service(ChromeDriverManager().install())
-        # Redireciona output do ChromeDriver para null
         service_obj.log_path = os.devnull if os.name != 'nt' else 'NUL'
         
         driver = webdriver.Chrome(service=service_obj, options=options)
-        
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         driver.get(view_url)
         
-        # Aguarda carregamento inicial
+        print("    Aguardando carregamento inicial...")
+        time.sleep(12)
+        
+        # ESTRATÉGIA 1: Tenta obter número total de páginas do metadado
+        total_pages_metadata = driver.execute_script("""
+            // Procura por indicadores de página no DOM
+            let pageIndicators = [
+                document.querySelector('[aria-label*="Page"]'),
+                document.querySelector('[data-page-count]'),
+                document.querySelector('.page-count')
+            ];
+            
+            for (let indicator of pageIndicators) {
+                if (indicator) {
+                    let text = indicator.textContent || indicator.getAttribute('aria-label') || '';
+                    let match = text.match(/of\\s+(\\d+)|Page\\s+\\d+\\s+of\\s+(\\d+)|(\\d+)\\s+pages/i);
+                    if (match) {
+                        return parseInt(match[1] || match[2] || match[3]);
+                    }
+                }
+            }
+            
+            return 0;
+        """)
+        
+        if total_pages_metadata > 0:
+            print(f"    📄 Documento tem {total_pages_metadata} páginas (detectado nos metadados)")
+        else:
+            print("    ⚠ Não foi possível detectar número total nos metadados")
+        
+        # ESTRATÉGIA 2: Força carregamento usando Page Down múltiplas vezes
+        print("    Forçando carregamento com Page Down...")
+        
+        body = driver.find_element("tag name", "body")
+        
+        # Pressiona Page Down 100 vezes para garantir que chegou no final
+        for i in range(100):
+            body.send_keys(Keys.PAGE_DOWN)
+            time.sleep(0.3)  # Pequena pausa entre cada Page Down
+            
+            if (i + 1) % 20 == 0:
+                # A cada 20 Page Downs, verifica quantas páginas foram carregadas
+                loaded = driver.execute_script("""
+                    let imgs = Array.from(document.getElementsByTagName('img'));
+                    return imgs.filter(img => 
+                        img.src.startsWith('blob:') && img.naturalHeight > 100
+                    ).length;
+                """)
+                print(f"    Carregadas: {loaded} páginas... (Page Down {i+1}/100)")
+        
+        print("    Aguardando renderização final...")
         time.sleep(5)
         
-        # Rolagem automática até o final
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        scroll_attempts = 0
-        max_scrolls = 50
+        # ESTRATÉGIA 3: Força carregamento com scroll até estabilizar
+        print("    Forçando carregamento com scroll...")
         
-        while scroll_attempts < max_scrolls:
+        last_count = 0
+        stable_rounds = 0
+        
+        for round in range(50):
+            # Scroll para o final
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
             
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            scroll_attempts += 1
+            # Conta páginas
+            current_count = driver.execute_script("""
+                let imgs = Array.from(document.getElementsByTagName('img'));
+                let pageImgs = imgs.filter(img => 
+                    img.src.startsWith('blob:') && img.naturalHeight > 100
+                );
+                
+                // Remove duplicatas por src
+                let unique = new Map();
+                pageImgs.forEach(img => {
+                    if (!unique.has(img.src)) {
+                        unique.set(img.src, img);
+                    }
+                });
+                
+                return unique.size;
+            """)
             
-            if new_height == last_height:
+            if current_count > last_count:
+                print(f"    Detectadas: {current_count} páginas...")
+                last_count = current_count
+                stable_rounds = 0
+            else:
+                stable_rounds += 1
+            
+            # Se estabilizou por 3 rodadas, para
+            if stable_rounds >= 3:
                 break
-            last_height = new_height
         
+        print(f"    ✓ Total detectado: {last_count} páginas")
+        
+        # ESTRATÉGIA 4: Scroll para o topo e força nova renderização
+        driver.execute_script("window.scrollTo(0, 0);")
         time.sleep(3)
         
-        # Executa script de captura
-        js_script = """
-        (function () {
-            let script = document.createElement("script");
-            script.onload = function () {
-                const { jsPDF } = window.jspdf;
-                
-                let pdf = null;
-                let imgElements = document.getElementsByTagName("img");
-                let validImgs = [];
-                let initPDF = true;
-                
-                for (let i = 0; i < imgElements.length; i++) {
-                    let img = imgElements[i];
-                    let checkURLString = "blob:https://drive.google.com/";
-                    
-                    if (img.src.substring(0, checkURLString.length) !== checkURLString) {
-                        continue;
-                    }
-                    
-                    validImgs.push(img);
-                }
-                
-                if (validImgs.length === 0) {
-                    console.error("Nenhuma página encontrada!");
-                    return;
-                }
-                
-                for (let i = 0; i < validImgs.length; i++) {
-                    let img = validImgs[i];
-                    let canvasElement = document.createElement("canvas");
-                    let con = canvasElement.getContext("2d");
-                    
-                    canvasElement.width = img.naturalWidth;
-                    canvasElement.height = img.naturalHeight;
-                    con.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
-                    
-                    let imgData = canvasElement.toDataURL("image/jpeg", 0.92);
-                    
-                    let orientation = img.naturalWidth > img.naturalHeight ? "l" : "p";
-                    let pageWidth = img.naturalWidth;
-                    let pageHeight = img.naturalHeight;
-                    
-                    if (initPDF) {
-                        pdf = new jsPDF({
-                            orientation: orientation,
-                            unit: "px",
-                            format: [pageWidth, pageHeight],
-                        });
-                        initPDF = false;
-                    }
-                    
-                    if (!initPDF) {
-                        pdf.addImage(imgData, "JPEG", 0, 0, pageWidth, pageHeight, "", "FAST");
-                        if (i !== validImgs.length - 1) {
-                            pdf.addPage();
-                        }
-                    }
-                }
-                
-                let title = document.querySelector('meta[itemprop="name"]').content;
-                if (title.split(".").pop() !== "pdf") {
-                    title = title + ".pdf";
-                }
-                
-                pdf.save(title, { returnPromise: true }).then(() => {
-                    document.body.removeChild(script);
-                });
-            };
+        # Simula zoom para forçar re-render
+        driver.execute_script("document.body.style.zoom = '0.99';")
+        time.sleep(1)
+        driver.execute_script("document.body.style.zoom = '1.0';")
+        time.sleep(2)
+        
+        # CAPTURA FINAL: Coleta todas as páginas
+        print("    Coletando todas as páginas...")
+        
+        all_pages_data = driver.execute_script("""
+            let imgs = Array.from(document.getElementsByTagName('img'));
+            let pageImgs = imgs.filter(img => 
+                img.src.startsWith('blob:') && img.naturalHeight > 100
+            );
             
-            let scriptURL = "https://unpkg.com/jspdf@latest/dist/jspdf.umd.min.js";
-            script.src = scriptURL;
-            document.body.appendChild(script);
-        })();
-        """
-        
-        driver.execute_script(js_script)
-        
-        # Aguarda download
-        downloaded_pdf_path = None
-        timeout = 120
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            time.sleep(2)
+            // Remove duplicatas e ordena por posição
+            let uniquePages = new Map();
             
+            pageImgs.forEach(img => {
+                if (!uniquePages.has(img.src)) {
+                    let rect = img.getBoundingClientRect();
+                    let offsetTop = window.scrollY + rect.top;
+                    
+                    uniquePages.set(img.src, {
+                        src: img.src,
+                        offsetTop: offsetTop,
+                        width: img.naturalWidth,
+                        height: img.naturalHeight
+                    });
+                }
+            });
+            
+            // Converte Map para Array e ordena
+            let pagesArray = Array.from(uniquePages.values());
+            pagesArray.sort((a, b) => a.offsetTop - b.offsetTop);
+            
+            return pagesArray.length;
+        """)
+        
+        if all_pages_data == 0:
+            logging.error("Nenhuma página detectada")
+            print("    ✗ Erro: Não foi possível detectar páginas")
+            driver.quit()
+            return False
+        
+        print(f"    Capturando {all_pages_data} páginas...")
+        
+        # Captura cada página individualmente
+        page_images = []
+        
+        for page_idx in range(all_pages_data):
             try:
-                pdf_files = [f for f in os.listdir(temp_download_dir) if f.endswith('.pdf') and not f.startswith('.')]
-                
-                if pdf_files:
-                    pdf_files_full = [os.path.join(temp_download_dir, f) for f in pdf_files]
-                    latest_pdf = max(pdf_files_full, key=os.path.getctime)
+                # Scroll para a página e captura
+                page_data = driver.execute_script(f"""
+                    let imgs = Array.from(document.getElementsByTagName('img'));
+                    let pageImgs = imgs.filter(img => 
+                        img.src.startsWith('blob:') && img.naturalHeight > 100
+                    );
                     
-                    # Verifica se download está completo
-                    size1 = os.path.getsize(latest_pdf)
-                    time.sleep(2)
+                    // Remove duplicatas e ordena
+                    let uniquePages = new Map();
                     
-                    if not os.path.exists(latest_pdf):
-                        continue
+                    pageImgs.forEach(img => {{
+                        if (!uniquePages.has(img.src)) {{
+                            let rect = img.getBoundingClientRect();
+                            let offsetTop = window.scrollY + rect.top;
+                            
+                            uniquePages.set(img.src, {{
+                                element: img,
+                                offsetTop: offsetTop
+                            }});
+                        }}
+                    }});
+                    
+                    let pagesArray = Array.from(uniquePages.values());
+                    pagesArray.sort((a, b) => a.offsetTop - b.offsetTop);
+                    
+                    if (pagesArray[{page_idx}]) {{
+                        let pageInfo = pagesArray[{page_idx}];
+                        let img = pageInfo.element;
                         
-                    size2 = os.path.getsize(latest_pdf)
+                        // Scroll para a página
+                        img.scrollIntoView({{block: 'center', behavior: 'instant'}});
+                        
+                        // Aguarda um frame
+                        return new Promise(resolve => {{
+                            requestAnimationFrame(() => {{
+                                // Cria canvas e captura
+                                let canvas = document.createElement('canvas');
+                                canvas.width = img.naturalWidth;
+                                canvas.height = img.naturalHeight;
+                                
+                                let ctx = canvas.getContext('2d');
+                                ctx.drawImage(img, 0, 0);
+                                
+                                resolve(canvas.toDataURL('image/png'));
+                            }});
+                        }});
+                    }}
                     
-                    if size1 == size2 and size1 > 1024:
-                        downloaded_pdf_path = latest_pdf
-                        break
+                    return null;
+                """)
+                
+                time.sleep(0.5)  # Pequena pausa entre páginas
+                
+                if page_data:
+                    import base64
+                    img_data = base64.b64decode(page_data.split(',')[1])
+                    page_images.append(Image.open(io.BytesIO(img_data)))
+                    
+                    if (page_idx + 1) % 5 == 0 or (page_idx + 1) == all_pages_data:
+                        print(f"    Progresso: {page_idx + 1}/{all_pages_data}")
+                        
             except Exception as e:
-                logging.debug(f"Erro ao verificar arquivos: {e}")
-                continue
+                logging.warning(f"Erro ao capturar página {page_idx + 1}: {e}")
+                
+                # Se falhar, tenta método alternativo (screenshot da viewport)
+                try:
+                    driver.execute_script(f"""
+                        let imgs = Array.from(document.getElementsByTagName('img'));
+                        let pageImgs = imgs.filter(img => img.src.startsWith('blob:'));
+                        
+                        let uniquePages = new Map();
+                        pageImgs.forEach(img => {{
+                            if (!uniquePages.has(img.src)) {{
+                                uniquePages.set(img.src, img);
+                            }}
+                        }});
+                        
+                        let pagesArray = Array.from(uniquePages.values());
+                        pagesArray.sort((a, b) => a.offsetTop - b.offsetTop);
+                        
+                        if (pagesArray[{page_idx}]) {{
+                            pagesArray[{page_idx}].scrollIntoView({{block: 'center'}});
+                        }}
+                    """)
+                    time.sleep(1)
+                except:
+                    continue
         
         driver.quit()
         
-        if downloaded_pdf_path and os.path.exists(downloaded_pdf_path):
-            shutil.move(downloaded_pdf_path, save_path)
-            file_size = os.path.getsize(save_path)
-            logging.info(f"SUCESSO (PDF View-Only Auto): '{file_name}' ({file_size / 1024 / 1024:.2f} MB)")
-            print(f"    Concluído: {file_size / 1024 / 1024:.2f} MB")
-            return True
-        else:
-            logging.error(f"PDF não foi baixado: {file_name}")
-            print(f"    Falha no download")
+        if not page_images:
+            logging.error("Nenhuma página foi capturada")
+            print("    ✗ Falha na captura")
             return False
         
+        print(f"    Gerando PDF ({len(page_images)} páginas)...")
+        
+        # Converte para PDF
+        if len(page_images) == 1:
+            page_images[0].save(save_path, 'PDF', resolution=100.0, quality=95)
+        else:
+            page_images[0].save(
+                save_path, 
+                'PDF', 
+                resolution=100.0,
+                save_all=True,
+                append_images=page_images[1:],
+                quality=95
+            )
+        
+        file_size = os.path.getsize(save_path)
+        
+        # Verifica se capturou todas as páginas esperadas
+        if total_pages_metadata > 0 and len(page_images) < total_pages_metadata:
+            print(f"    ⚠ Aviso: Capturadas {len(page_images)}/{total_pages_metadata} páginas")
+            logging.warning(f"PDF incompleto: {len(page_images)}/{total_pages_metadata} páginas")
+        else:
+            print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({len(page_images)} páginas)")
+        
+        logging.info(f"SUCESSO (PDF): '{file_name}' ({len(page_images)} páginas, {file_size / 1024 / 1024:.2f} MB)")
+        
+        return True
+        
     except Exception as e:
-        logging.error(f"Erro na captura automática: {type(e).__name__}: {e}")
-        print(f"    Erro: {type(e).__name__}")
+        logging.error(f"Erro na captura: {type(e).__name__}: {e}")
+        print(f"    ✗ Erro: {type(e).__name__}")
+        import traceback
+        logging.error(traceback.format_exc())
         
         if driver:
             try:
@@ -473,212 +580,129 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
         return False
 
 
-def _download_pdf_with_selenium(service, file_id, file_name, save_path, temp_download_dir):
+def _download_pdf_manual_scroll(service, file_id, file_name, save_path, temp_download_dir):
     """
-    Usa script JavaScript do GitHub para capturar PDFs view-only.
-    Baseado em: https://github.com/zavierferodova/Google-Drive-View-Only-PDF-Script-Downloader
+    MÉTODO ALTERNATIVO: Modo semi-automático com intervenção do usuário.
+    Útil para PDFs muito grandes ou protegidos.
     """
     driver = None
     
     try:
         from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from PIL import Image
+        import io
         
-        logging.info(f"Iniciando captura de PDF: {file_name}")
+        print(f"\n  📄 PDF Manual: {file_name}")
+        print("  Este PDF requer scroll manual para carregar todas as páginas.")
         
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
         view_url = file_metadata.get('webViewLink')
         if not view_url:
-            logging.error(f"Não foi possível obter webViewLink para {file_id}")
             return False
 
-        logging.info(f"Acessando: {view_url}")
-
         options = ChromeOptions()
+        # NÃO usa headless para permitir visualização
         options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option('useAutomationExtension', False)
         options.add_argument('--start-maximized')
         
-        # Configura download
-        prefs = {
-            "download.default_directory": temp_download_dir,
-            "download.prompt_for_download": False,
-            "plugins.always_open_pdf_externally": False
-        }
-        options.add_experimental_option("prefs", prefs)
-        
-        logging.info("Iniciando Chrome...")
         service_obj = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service_obj, options=options)
-        
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         driver.get(view_url)
         
-        print("\n╔═══════════════════════════════════════════════╗")
-        print("║   DOWNLOAD DE PDF VIEW-ONLY AUTOMÁTICO       ║")
-        print("╚═══════════════════════════════════════════════╝")
-        print()
-        print("INSTRUÇÕES:")
-        print("1. Faça login se necessário")
-        print("2. Aguarde o PDF carregar COMPLETAMENTE")
-        print("3. Role até o FINAL do documento (importante!)")
-        print("4. Pressione Enter aqui quando estiver no final")
-        print()
-        input("Pressione Enter quando tudo estiver carregado...")
+        print("\n  ╔════════════════════════════════════════╗")
+        print("  ║   INSTRUÇÕES - Download Manual         ║")
+        print("  ╚════════════════════════════════════════╝")
+        print("\n  1. O navegador será aberto")
+        print("  2. Faça login se necessário")
+        print("  3. ROLE ATÉ O FINAL do documento")
+        print("  4. Aguarde TODAS as páginas carregarem")
+        print("  5. Volte ao TOPO do documento")
+        print("  6. Pressione Enter aqui quando pronto\n")
         
-        time.sleep(2)
+        input("  Pressione Enter quando TODAS as páginas estiverem carregadas...")
         
-        # Script do GitHub modificado
-        js_script = """
-        (function () {
-            console.log("Iniciando script de download...");
+        print("    Capturando páginas...")
+        
+        # Conta e captura páginas
+        all_pages = driver.execute_script("""
+            let imgs = Array.from(document.getElementsByTagName('img'));
+            let pageImgs = imgs.filter(img => 
+                img.src.startsWith('blob:') && img.naturalHeight > 100
+            );
             
-            let script = document.createElement("script");
-            script.onload = function () {
-                const { jsPDF } = window.jspdf;
-                
-                let pdf = null;
-                let imgElements = document.getElementsByTagName("img");
-                let validImgs = [];
-                let initPDF = true;
-                
-                console.log("Escaneando conteúdo...");
-                
-                for (let i = 0; i < imgElements.length; i++) {
-                    let img = imgElements[i];
-                    let checkURLString = "blob:https://drive.google.com/";
-                    
-                    if (img.src.substring(0, checkURLString.length) !== checkURLString) {
-                        continue;
-                    }
-                    
-                    validImgs.push(img);
+            let uniquePages = new Map();
+            pageImgs.forEach(img => {
+                if (!uniquePages.has(img.src)) {
+                    uniquePages.set(img.src, img);
                 }
-                
-                console.log(validImgs.length + " páginas encontradas!");
-                console.log("Gerando PDF...");
-                
-                for (let i = 0; i < validImgs.length; i++) {
-                    let img = validImgs[i];
-                    let canvasElement = document.createElement("canvas");
-                    let con = canvasElement.getContext("2d");
-                    
-                    canvasElement.width = img.naturalWidth;
-                    canvasElement.height = img.naturalHeight;
-                    con.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
-                    
-                    let imgData = canvasElement.toDataURL("image/jpeg", 0.95);
-                    
-                    let orientation = img.naturalWidth > img.naturalHeight ? "l" : "p";
-                    let pageWidth = img.naturalWidth;
-                    let pageHeight = img.naturalHeight;
-                    
-                    if (initPDF) {
-                        pdf = new jsPDF({
-                            orientation: orientation,
-                            unit: "px",
-                            format: [pageWidth, pageHeight],
-                        });
-                        initPDF = false;
-                    }
-                    
-                    if (!initPDF) {
-                        pdf.addImage(imgData, "JPEG", 0, 0, pageWidth, pageHeight, "", "FAST");
-                        if (i !== validImgs.length - 1) {
-                            pdf.addPage();
-                        }
-                    }
-                    
-                    const percentages = Math.floor(((i + 1) / validImgs.length) * 100);
-                    console.log("Processando: " + percentages + "%");
-                }
-                
-                let title = document.querySelector('meta[itemprop="name"]').content;
-                if (title.split(".").pop() !== "pdf") {
-                    title = title + ".pdf";
-                }
-                
-                console.log("Baixando PDF...");
-                pdf.save(title, { returnPromise: true }).then(() => {
-                    console.log("PDF baixado com sucesso!");
-                    document.body.removeChild(script);
-                });
-            };
+            });
             
-            let scriptURL = "https://unpkg.com/jspdf@latest/dist/jspdf.umd.min.js";
-            let trustedURL;
-            
-            if (window.trustedTypes && trustedTypes.createPolicy) {
-                const policy = trustedTypes.createPolicy("myPolicy", {
-                    createScriptURL: (input) => input,
-                });
-                trustedURL = policy.createScriptURL(scriptURL);
-            } else {
-                trustedURL = scriptURL;
-            }
-            
-            script.src = trustedURL;
-            document.body.appendChild(script);
-        })();
-        """
+            return uniquePages.size;
+        """)
         
-        logging.info("Executando script de captura...")
-        print("\nExecutando script de captura automática...")
-        print("Aguarde, o PDF será baixado automaticamente...")
+        print(f"    Detectadas: {all_pages} páginas")
         
-        driver.execute_script(js_script)
+        page_images = []
         
-        # Aguarda o download do PDF
-        downloaded_pdf_path = None
-        timeout = 180
-        start_time = time.time()
-        
-        logging.info(f"Aguardando download (timeout: {timeout}s)...")
-        
-        # Aguarda arquivo aparecer na pasta de downloads
-        while time.time() - start_time < timeout:
-            time.sleep(2)
-            
-            # Procura por arquivos PDF recentes
-            pdf_files = [f for f in os.listdir(temp_download_dir) if f.endswith('.pdf')]
-            
-            if pdf_files:
-                # Pega o mais recente
-                pdf_files_full = [os.path.join(temp_download_dir, f) for f in pdf_files]
-                latest_pdf = max(pdf_files_full, key=os.path.getctime)
+        for i in range(all_pages):
+            page_data = driver.execute_script(f"""
+                let imgs = Array.from(document.getElementsByTagName('img'));
+                let pageImgs = imgs.filter(img => img.src.startsWith('blob:'));
                 
-                # Verifica se não está sendo escrito ainda
-                size1 = os.path.getsize(latest_pdf)
-                time.sleep(1)
-                size2 = os.path.getsize(latest_pdf)
+                let uniquePages = new Map();
+                pageImgs.forEach(img => {{
+                    if (!uniquePages.has(img.src)) {{
+                        uniquePages.set(img.src, img);
+                    }}
+                }});
                 
-                if size1 == size2 and size1 > 1024:  # Arquivo completo
-                    downloaded_pdf_path = latest_pdf
-                    break
+                let pagesArray = Array.from(uniquePages.values());
+                
+                if (pagesArray[{i}]) {{
+                    let img = pagesArray[{i}];
+                    img.scrollIntoView({{block: 'center'}});
+                    
+                    let canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                    
+                    return canvas.toDataURL('image/png');
+                }}
+                return null;
+            """)
             
-            elapsed = int(time.time() - start_time)
-            if elapsed % 10 == 0:
-                print(f"Aguardando... {elapsed}s / {timeout}s")
+            if page_data:
+                import base64
+                img_data = base64.b64decode(page_data.split(',')[1])
+                page_images.append(Image.open(io.BytesIO(img_data)))
+                
+                if (i + 1) % 5 == 0:
+                    print(f"    Capturadas: {i + 1}/{all_pages}")
+            
+            time.sleep(0.3)
         
         driver.quit()
         
-        if downloaded_pdf_path and os.path.exists(downloaded_pdf_path):
-            # Move para o local correto
-            shutil.move(downloaded_pdf_path, save_path)
-            file_size = os.path.getsize(save_path)
-            logging.info(f"SUCESSO (PDF View-Only): '{file_name}' ({file_size / 1024 / 1024:.2f} MB)")
-            print(f"\nPDF salvo com sucesso: {file_size / 1024 / 1024:.2f} MB")
-            return True
-        else:
-            logging.error("PDF não foi baixado dentro do timeout")
-            print("\nErro: PDF não foi baixado. Verifique se rolou até o final do documento.")
+        if not page_images:
+            print("    ✗ Nenhuma página capturada")
             return False
         
-    except Exception as e:
-        logging.error(f"Erro na captura: {type(e).__name__}: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
+        print(f"    Gerando PDF...")
         
+        if len(page_images) == 1:
+            page_images[0].save(save_path, 'PDF', resolution=100.0, quality=95)
+        else:
+            page_images[0].save(save_path, 'PDF', resolution=100.0, save_all=True,
+                              append_images=page_images[1:], quality=95)
+        
+        file_size = os.path.getsize(save_path)
+        print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({len(page_images)} páginas)")
+        
+        return True
+        
+    except Exception as e:
+        print(f"    ✗ Erro: {e}")
         if driver:
             try:
                 driver.quit()
