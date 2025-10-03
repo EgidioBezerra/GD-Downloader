@@ -1,0 +1,32 @@
+# Ignore node_modules folder
+node_modules/
+
+# Ignore log files
+*.log
+logs/
+
+# Ignore environment files
+.env
+.env.local
+
+# Ignore build output
+dist/
+build/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore IDE specific files
+.vscode/
+.idea/
+*.iml
+# Ignore credential files
+credentials.json
+token.json
+
+# Ignore checkpoints, Python cache, and temporary folders
+.checkpoints/
+__pycache__/
+temp_pdf_downloads/
+Downloads/
