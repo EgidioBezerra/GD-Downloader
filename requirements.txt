@@ -1,6 +1,25 @@
-google-api-python-client
-google-auth-httplib2
+# Google Drive API
+google-auth
 google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+
+# Automação moderna - PLAYWRIGHT (RECOMENDADO)
+playwright
+playwright-stealth
+
+# Fallback Selenium (compatibilidade com código existente)
 selenium
+webdriver-manager
+
+# Interface Rich
+rich
+
+# Utilitários
 tqdm
-PyPDF2>=3.0.0
+requests
+urllib3
+Pillow
+
+# Processamento (opcional)
+PyPDF2

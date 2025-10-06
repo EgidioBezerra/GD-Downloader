@@ -2,7 +2,7 @@
 """
 Google Drive Downloader - Download inteligente com pause/resume
 
-⚠️  AVISO LEGAL:
+⚠️ AVISO LEGAL:
 Este software é fornecido apenas para fins educacionais e de backup pessoal.
 O download de arquivos view-only pode violar os Termos de Serviço do Google Drive.
 Use por sua conta e risco. Os desenvolvedores não se responsabilizam pelo uso indevido.
@@ -14,6 +14,7 @@ import shutil
 import logging
 import signal
 import sys
+import re
 from collections import deque
 from pathlib import Path
 from typing import Set, Dict, List
@@ -53,6 +54,118 @@ current_failed_files = None
 current_destination_path = None
 
 
+# ============================================================================
+# FUNÇÕES DE SANITIZAÇÃO DE CAMINHOS (Windows-safe)
+# ============================================================================
+
+def sanitize_path_component(name: str, max_length: int = 100) -> str:
+    """
+    Sanitiza componente de caminho para Windows.
+    
+    Resolve problemas:
+    - Caracteres inválidos (<>:"|?*)
+    - Espaços no início/fim (CRÍTICO no Windows)
+    - Nomes muito longos
+    - Nomes reservados do Windows
+    """
+    # Remove/substitui caracteres inválidos
+    invalid_chars = r'[<>:"|?*]'
+    name = re.sub(invalid_chars, '_', name)
+    
+    # Remove espaços e pontos no início e fim (CRÍTICO!)
+    name = name.strip(' .')
+    
+    # Substitui múltiplos espaços por um
+    name = ' '.join(name.split())
+    
+    # Remove barras (já são separadores)
+    name = name.replace('/', '_').replace('\\', '_')
+    
+    # Trunca se muito longo (deixa espaço para extensão)
+    if len(name) > max_length:
+        # Preserva extensão se houver
+        if '.' in name:
+            name_part, ext = name.rsplit('.', 1)
+            max_name = max_length - len(ext) - 1
+            name = name_part[:max_name] + '.' + ext
+        else:
+            name = name[:max_length]
+    
+    # Nomes reservados do Windows
+    reserved = {
+        'CON', 'PRN', 'AUX', 'NUL',
+        'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+        'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+    }
+    
+    if name.upper() in reserved:
+        name = f"_{name}"
+    
+    return name
+
+
+def create_safe_path(base_path: Path, *components) -> Path:
+    """
+    Cria caminho seguro sanitizando cada componente.
+    
+    Args:
+        base_path: Caminho base
+        *components: Componentes do caminho a adicionar
+        
+    Returns:
+        Path object sanitizado
+    """
+    result_path = base_path
+    
+    for component in components:
+        # Sanitiza o componente
+        safe_component = sanitize_path_component(component)
+        
+        # Adiciona ao caminho
+        result_path = result_path / safe_component
+    
+    return result_path
+
+
+def ensure_path_length_valid(path: Path, max_length: int = 240) -> Path:
+    """
+    Garante que o caminho não excede limite do Windows.
+    
+    Windows tem limite de 260 caracteres, deixamos margem de segurança.
+    """
+    path_str = str(path)
+    
+    if len(path_str) <= max_length:
+        return path
+    
+    # Caminho muito longo - encurta cada componente
+    parts = path.parts
+    
+    if len(parts) <= 2:  # Apenas drive e arquivo
+        return path
+    
+    base = Path(parts[0])  # Drive (C:\, D:\, etc)
+    
+    # Encurta componentes intermediários
+    shortened_parts = []
+    for part in parts[1:]:
+        if len(part) > 40:
+            shortened_parts.append(part[:37] + '...')
+        else:
+            shortened_parts.append(part)
+    
+    # Reconstrói caminho
+    new_path = base
+    for part in shortened_parts:
+        new_path = new_path / part
+    
+    return new_path
+
+
+# ============================================================================
+# SIGNAL HANDLER
+# ============================================================================
+
 def signal_handler(sig, frame):
     """Manipula Ctrl+C para salvar estado de forma segura."""
     global interrupted, checkpoint_mgr, current_folder_id
@@ -60,7 +173,7 @@ def signal_handler(sig, frame):
     
     console.print("\n")
     console.print(Panel.fit(
-        "[bold yellow]⚠️  Interrupção detectada![/bold yellow]\n"
+        "[bold yellow]Interrupção detectada![/bold yellow]\n"
         "Salvando progresso para retomar...",
         border_style="yellow",
         title="Download Pausado"
@@ -75,11 +188,11 @@ def signal_handler(sig, frame):
         )
         
         if success:
-            console.print("\n[green]✓ Checkpoint salvo com sucesso![/green]")
+            console.print("\n[green]Checkpoint salvo com sucesso![/green]")
             console.print("\n[cyan]Para retomar, execute:[/cyan]")
             console.print("[bold]python main.py <URL> <DESTINO> --resume[/bold]\n")
         else:
-            console.print("\n[red]✗ Erro ao salvar checkpoint[/red]")
+            console.print("\n[red]Erro ao salvar checkpoint[/red]")
     
     interrupted = True
     sys.exit(0)
@@ -88,7 +201,7 @@ def signal_handler(sig, frame):
 def show_legal_warning():
     """Exibe aviso legal sobre arquivos view-only."""
     warning_panel = Panel.fit(
-        "[bold yellow]⚠️  AVISO LEGAL IMPORTANTE[/bold yellow]\n\n"
+        "[bold yellow]AVISO LEGAL IMPORTANTE[/bold yellow]\n\n"
         "Este programa pode baixar arquivos [bold]view-only[/bold] do Google Drive.\n"
         "Isso pode violar os Termos de Serviço do Google.\n\n"
         "[dim]Por favor, use este recurso apenas para:[/dim]\n"
@@ -101,7 +214,7 @@ def show_legal_warning():
         "  • Download não autorizado de material proprietário\n\n"
         "[dim]Os desenvolvedores não se responsabilizam pelo uso indevido.[/dim]",
         border_style="yellow",
-        title="⚖️  Responsabilidade Legal"
+        title="Responsabilidade Legal"
     )
     
     console.print(warning_panel)
@@ -124,9 +237,14 @@ def setup_logging(log_file: str = 'download.log'):
     logging.getLogger().addHandler(console_handler)
 
 
+# ============================================================================
+# TRAVERSE AND PREPARE - VERSÃO CORRIGIDA PARA WINDOWS
+# ============================================================================
+
 def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Path, download_queue: deque):
     """
     Mapeia recursivamente arquivos da pasta do Google Drive.
+    VERSÃO CORRIGIDA: Sanitiza caminhos para Windows (remove espaços, limita comprimento).
     
     Args:
         service: Serviço autenticado do Google Drive
@@ -136,7 +254,7 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
     """
     folders_to_process = deque([{'id': folder_id, 'path': local_path}])
     
-    with console.status("[bold green]🔍 Mapeando arquivos...") as status:
+    with console.status("[bold green]Mapeando arquivos...") as status:
         folder_count = 0
         
         while folders_to_process:
@@ -149,7 +267,7 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
                 folder = folders_to_process.popleft()
                 folder_count += 1
                 
-                status.update(f"[bold green]🔍 Mapeando... ({folder_count} pastas)")
+                status.update(f"[bold green]Mapeando... ({folder_count} pastas)")
                 
                 def create_callback(folder_info):
                     def callback(request_id, response, exception):
@@ -158,12 +276,34 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
                             return
                             
                         for item in response.get('files', []):
-                            item_path = folder_info['path'] / item['name']
+                            # SANITIZA O NOME DO ITEM (remove espaços, caracteres inválidos)
+                            safe_name = sanitize_path_component(item['name'])
+                            
+                            # Cria caminho seguro
+                            item_path = create_safe_path(folder_info['path'], safe_name)
+                            
+                            # Verifica comprimento total do caminho
+                            item_path = ensure_path_length_valid(item_path)
                             
                             if item.get('mimeType') == 'application/vnd.google-apps.folder':
                                 folders_to_process.append({'id': item['id'], 'path': item_path})
                             else:
-                                item_path.parent.mkdir(parents=True, exist_ok=True)
+                                # Cria diretório pai com tratamento de erro robusto
+                                try:
+                                    item_path.parent.mkdir(parents=True, exist_ok=True)
+                                except OSError as e:
+                                    # Se falhar (caminho muito longo), tenta alternativa
+                                    logging.warning(f"Caminho problemático, usando alternativa: {e}")
+                                    
+                                    # Fallback: salva em subpasta simplificada
+                                    simple_path = Path(str(folder_info['path'].parts[0])) / "Downloads" / safe_name
+                                    try:
+                                        simple_path.parent.mkdir(parents=True, exist_ok=True)
+                                        item_path = simple_path
+                                    except Exception as e2:
+                                        logging.error(f"Não foi possível criar caminho: {e2}")
+                                        continue
+                                
                                 download_queue.append({
                                     'file_info': item,
                                     'save_path': str(item_path)
@@ -182,8 +322,12 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
             if batch._order:
                 batch.execute()
     
-    console.print(f"[green]✓[/green] Mapeamento concluído: {len(download_queue)} arquivos encontrados")
+    console.print(f"[green][/green] Mapeamento concluído: {len(download_queue)} arquivos encontrados")
 
+
+# ============================================================================
+# WORKERS
+# ============================================================================
 
 def download_worker(task, creds, completed_files: Set[str], failed_files: Set[str]) -> bool:
     """Worker para downloads padrão."""
@@ -249,6 +393,10 @@ def video_worker(task, creds, gpu_flags, completed_files: Set[str], failed_files
         return False
 
 
+# ============================================================================
+# ARGUMENT PARSING
+# ============================================================================
+
 def parse_arguments():
     """Parse e valida argumentos da linha de comando."""
     parser = argparse.ArgumentParser(
@@ -297,6 +445,10 @@ Para mais informações, consulte: requirements_and_setup.md
     
     return parser.parse_args()
 
+
+# ============================================================================
+# FILE CLASSIFICATION
+# ============================================================================
 
 def classify_files(
     download_queue: List[Dict],
@@ -356,6 +508,10 @@ def classify_files(
     return parallel_tasks, video_view_only_tasks, pdf_view_only_tasks, unsupported_tasks
 
 
+# ============================================================================
+# MAIN FUNCTION
+# ============================================================================
+
 def main():
     """Função principal do programa."""
     global checkpoint_mgr, current_folder_id
@@ -375,11 +531,11 @@ def main():
     
     # Banner inicial
     console.print(Panel.fit(
-        "[bold cyan]📦 Google Drive Downloader[/bold cyan]\n"
+        "[bold cyan]Google Drive Downloader[/bold cyan]\n"
         "[dim]Download inteligente com pause/resume[/dim]\n"
-        "[dim]Versão 2.0 - Melhorada e Segura[/dim]",
+        "[dim]Versão 2.0 - Windows Otimizado[/dim]",
         border_style="cyan",
-        title="🚀 Iniciando"
+        title="Iniciando"
     ))
     
     # Mostra aviso legal (exceto se suprimido)
@@ -394,7 +550,7 @@ def main():
     
     try:
         # Validações iniciais
-        console.print("[cyan]🔍 Validando entrada...[/cyan]")
+        console.print("[cyan]Validando entrada...[/cyan]")
         
         # Valida credenciais
         validate_credentials_file('credentials.json')
@@ -424,7 +580,7 @@ def main():
             try:
                 check_ffmpeg_installed()
             except FFmpegNotFoundError as e:
-                console.print(f"[yellow]⚠️  {e.message}[/yellow]")
+                console.print(f"[yellow]{e.message}[/yellow]")
                 console.print(f"[dim]{e.details}[/dim]")
                 console.print("\n[yellow]Vídeos view-only não poderão ser baixados.[/yellow]")
                 
@@ -432,16 +588,16 @@ def main():
                 if response.lower().strip() != 's':
                     return
         
-        console.print("[green]✓ Validação concluída[/green]\n")
+        console.print("[green]Validação concluída[/green]\n")
         
     except (InvalidURLError, ValidationError, FFmpegNotFoundError) as e:
-        console.print(f"\n[bold red]❌ Erro de Validação:[/bold red]")
+        console.print(f"\n[bold red]Erro de Validação:[/bold red]")
         console.print(f"[red]{e.message}[/red]")
         if hasattr(e, 'details') and e.details:
             console.print(f"[dim]{e.details}[/dim]")
         return
     except Exception as e:
-        console.print(f"\n[bold red]❌ Erro inesperado:[/bold red] {e}")
+        console.print(f"\n[bold red]Erro inesperado:[/bold red] {e}")
         logging.exception("Erro durante validação")
         return
     
@@ -450,7 +606,7 @@ def main():
     
     # Autenticação
     try:
-        with console.status("[bold green]🔐 Autenticando..."):
+        with console.status("[bold green]Autenticando..."):
             service, creds = get_drive_service()
             
         if not service or not creds:
@@ -459,10 +615,10 @@ def main():
         if not creds.valid:
             raise AuthenticationError("Credenciais inválidas")
             
-        console.print("[green]✓ Autenticado com sucesso[/green]")
+        console.print("[green]Autenticado com sucesso[/green]")
         
     except (AuthenticationError, Exception) as e:
-        console.print(f"\n[bold red]❌ Erro de Autenticação:[/bold red]")
+        console.print(f"\n[bold red]Erro de Autenticação:[/bold red]")
         console.print(f"[red]{str(e)}[/red]")
         console.print("\n[dim]Tente remover token.json e autenticar novamente[/dim]")
         return
@@ -470,7 +626,7 @@ def main():
     # Gerenciamento de checkpoint
     if args.clear_checkpoint:
         checkpoint_mgr.clear_checkpoint(folder_id)
-        console.print("[yellow]🗑️  Checkpoint removido[/yellow]\n")
+        console.print("[yellow]Checkpoint removido[/yellow]\n")
     
     checkpoint = checkpoint_mgr.load_checkpoint(folder_id) if args.resume else None
     completed_files = set(checkpoint['completed_files']) if checkpoint else set()
@@ -480,7 +636,7 @@ def main():
     current_failed_files = failed_files
     
     if checkpoint:
-        table = Table(title="📋 Checkpoint Encontrado", box=box.ROUNDED)
+        table = Table(title="Checkpoint Encontrado", box=box.ROUNDED)
         table.add_column("Métrica", style="cyan", no_wrap=True)
         table.add_column("Valor", style="green")
         
@@ -492,7 +648,7 @@ def main():
         console.print(table)
         console.print()
         
-        resume = console.input("[yellow]❓ Deseja retomar o download? (s/n):[/yellow] ").lower().strip()
+        resume = console.input("[yellow]Deseja retomar o download? (s/n):[/yellow] ").lower().strip()
         if resume != 's':
             completed_files.clear()
             failed_files.clear()
@@ -500,7 +656,7 @@ def main():
     
     # Obtém informações da pasta
     try:
-        with console.status("[bold green]📁 Verificando pasta..."):
+        with console.status("[bold green]Verificando pasta..."):
             folder_metadata = service.files().get(
                 fileId=folder_id,
                 fields='name',
@@ -508,30 +664,30 @@ def main():
             ).execute()
             folder_name = folder_metadata.get('name', 'Pasta')
             
-        console.print(f"[green]✓ Pasta:[/green] [bold]{folder_name}[/bold]")
+        console.print(f"[green]Pasta:[/green] [bold]{folder_name}[/bold]")
         
     except Exception as e:
-        console.print(f"\n[bold red]❌ Erro ao acessar pasta:[/bold red] {e}")
+        console.print(f"\n[bold red]Erro ao acessar pasta:[/bold red] {e}")
         logging.exception("Erro ao obter metadados da pasta")
         return
     
     # Mapeia arquivos
     download_queue = deque()
-    final_destination = destination_path / folder_name
+    final_destination = destination_path / sanitize_path_component(folder_name)
     current_destination_path = str(final_destination)
     
     try:
         traverse_and_prepare_download_batch(service, folder_id, final_destination, download_queue)
     except Exception as e:
-        console.print(f"\n[bold red]❌ Erro ao mapear arquivos:[/bold red] {e}")
+        console.print(f"\n[bold red]Erro ao mapear arquivos:[/bold red] {e}")
         logging.exception("Erro durante mapeamento")
         return
     
     if not download_queue:
-        console.print("\n[yellow]⚠️  Nenhum arquivo encontrado na pasta[/yellow]")
+        console.print("\n[yellow]Nenhum arquivo encontrado na pasta[/yellow]")
         return
     
-    console.print(f"[cyan]📊 Total de arquivos:[/cyan] {len(download_queue)}\n")
+    console.print(f"[cyan]Total de arquivos:[/cyan] {len(download_queue)}\n")
     
     # Classifica arquivos
     parallel_tasks, video_view_only_tasks, pdf_view_only_tasks, unsupported_tasks = classify_files(
@@ -543,23 +699,23 @@ def main():
     )
     
     # Exibe tabela de classificação
-    table = Table(title="📊 Classificação dos Arquivos", box=box.ROUNDED)
+    table = Table(title="Classificação dos Arquivos", box=box.ROUNDED)
     table.add_column("Tipo", style="cyan")
     table.add_column("Quantidade", style="magenta", justify="right")
     table.add_column("Status", justify="center")
     
-    table.add_row("Downloads padrão", str(len(parallel_tasks)), "✓")
-    table.add_row("Vídeos view-only", str(len(video_view_only_tasks)), "✓")
-    table.add_row("PDFs view-only", str(len(pdf_view_only_tasks)), "✓")
-    table.add_row("Já completados", str(len(completed_files)), "⊙")
-    table.add_row("Não suportados", str(len(unsupported_tasks)), "⊗")
+    table.add_row("Downloads padrão", str(len(parallel_tasks)), "")
+    table.add_row("Vídeos view-only", str(len(video_view_only_tasks)), "")
+    table.add_row("PDFs view-only", str(len(pdf_view_only_tasks)), "")
+    table.add_row("Já completados", str(len(completed_files)), "")
+    table.add_row("Não suportados", str(len(unsupported_tasks)), "")
     
     console.print(table)
     console.print()
     
     # Downloads padrão
     if not only_view_only and parallel_tasks:
-        console.print(f"\n[bold cyan]🔽 Iniciando Downloads Padrão[/bold cyan]")
+        console.print(f"\n[bold cyan]Iniciando Downloads Padrão[/bold cyan]")
         console.print(f"Workers: {workers} | Arquivos: {len(parallel_tasks)}\n")
         
         try:
@@ -596,11 +752,11 @@ def main():
             return
         
         successful = sum(1 for r in results if r)
-        console.print(f"[green]✓ Concluídos: {successful}/{len(parallel_tasks)}[/green]\n")
+        console.print(f"[green]Concluídos: {successful}/{len(parallel_tasks)}[/green]\n")
     
     # Vídeos view-only
     if video_view_only_tasks:
-        console.print(f"\n[bold magenta]🎬 Iniciando Vídeos View-Only[/bold magenta]")
+        console.print(f"\n[bold magenta]Iniciando Vídeos View-Only[/bold magenta]")
         console.print(f"Workers: {min(workers, len(video_view_only_tasks))} | Vídeos: {len(video_view_only_tasks)}\n")
         
         video_workers = min(workers, len(video_view_only_tasks))
@@ -640,13 +796,13 @@ def main():
             return
         
         successful = sum(1 for r in results if r)
-        console.print(f"[green]✓ Concluídos: {successful}/{len(video_view_only_tasks)}[/green]\n")
+        console.print(f"[green]Concluídos: {successful}/{len(video_view_only_tasks)}[/green]\n")
     
     # PDFs view-only
     if pdf_view_only_tasks:
-        console.print(f"\n[bold blue]📄 Iniciando PDFs View-Only[/bold blue]")
+        console.print(f"\n[bold blue]Iniciando PDFs View-Only[/bold blue]")
         console.print(f"PDFs: {len(pdf_view_only_tasks)}")
-        console.print("[yellow]⚠️  Processamento automático (pode ser lento)[/yellow]\n")
+        console.print("[yellow]Processamento automático (pode ser lento)[/yellow]\n")
         
         temp_download_dir = os.path.abspath("./temp_pdf_downloads")
         os.makedirs(temp_download_dir, exist_ok=True)
@@ -660,17 +816,17 @@ def main():
             
             file_key = f"{file_info['id']}_{file_info['name']}"
             if file_key in completed_files:
-                console.print("  [green]✓ Já baixado[/green]")
+                console.print("  [green]Já baixado[/green]")
                 successful += 1
                 continue
             
             if download_view_only_pdf(service, file_info['id'], save_path, temp_download_dir):
                 successful += 1
                 completed_files.add(file_key)
-                console.print("  [green]✓ Sucesso[/green]")
+                console.print("  [green]Sucesso[/green]")
             else:
                 failed_files.add(file_key)
-                console.print("  [red]✗ Falha[/red]")
+                console.print("  [red]Falha[/red]")
             
             checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
                                           failed_files, current_destination_path)
@@ -679,7 +835,7 @@ def main():
         if os.path.exists(temp_download_dir):
             shutil.rmtree(temp_download_dir)
         
-        console.print(f"\n[green]✓ Concluídos: {successful}/{len(pdf_view_only_tasks)}[/green]\n")
+        console.print(f"\n[green]Concluídos: {successful}/{len(pdf_view_only_tasks)}[/green]\n")
     
     # Relatório final
     total_tasks = len(parallel_tasks) + len(video_view_only_tasks) + len(pdf_view_only_tasks)
@@ -688,15 +844,15 @@ def main():
     if all_complete:
         checkpoint_mgr.clear_checkpoint(folder_id)
         console.print(Panel.fit(
-            "[bold green]✅ Download 100% Completo![/bold green]\n"
+            "[bold green]Download 100% Completo![/bold green]\n"
             f"Todos os {len(completed_files)} arquivos foram baixados com sucesso.\n"
             f"Localização: [cyan]{final_destination}[/cyan]",
             border_style="green",
-            title="🎉 Sucesso"
+            title="Sucesso"
         ))
     elif len(failed_files) > 0:
         console.print(Panel.fit(
-            f"[yellow]⚠️  Download Concluído com Falhas[/yellow]\n"
+            f"[yellow]Download Concluído com Falhas[/yellow]\n"
             f"Sucesso: [green]{len(completed_files)}[/green]\n"
             f"Falhas: [red]{len(failed_files)}[/red]\n\n"
             f"Execute com [bold]--resume[/bold] para tentar novamente as falhas.",
@@ -704,10 +860,10 @@ def main():
             title="Atenção"
         ))
     else:
-        console.print(f"\n[green]✓ Download concluído[/green]")
+        console.print(f"\n[green]Download concluído[/green]")
     
     # Estatísticas finais
-    table = Table(title="📊 Estatísticas Finais", box=box.ROUNDED)
+    table = Table(title="Estatísticas Finais", box=box.ROUNDED)
     table.add_column("Métrica", style="cyan")
     table.add_column("Valor", style="green", justify="right")
     
@@ -727,9 +883,9 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        console.print("\n[yellow]⚠️  Programa interrompido pelo usuário[/yellow]")
+        console.print("\n[yellow]Programa interrompido pelo usuário[/yellow]")
         sys.exit(0)
     except Exception as e:
-        console.print(f"\n[bold red]❌ Erro fatal não tratado:[/bold red] {e}")
+        console.print(f"\n[bold red]Erro fatal não tratado:[/bold red] {e}")
         logging.exception("Erro fatal não tratado")
         sys.exit(1)
