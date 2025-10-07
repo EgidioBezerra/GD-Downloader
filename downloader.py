@@ -298,10 +298,16 @@ def download_view_only_video(creds, file_id: str, file_name: str, save_path: str
 # ============================================================================
 
 async def download_view_only_pdf_playwright(service, file_id: str, save_path: str, 
-                                           temp_download_dir: str, scroll_speed: int = 50) -> bool:
+                                           temp_download_dir: str, scroll_speed: int = 50,
+                                           ocr_enabled: bool = False,        # ===== ADICIONAR =====
+                                           ocr_lang: str = "por+eng") -> bool:  # ===== ADICIONAR =====
     """
     Download de PDFs view-only usando Playwright com técnicas modernas de 2025.
     Método principal: canvas-based blob extraction com stealth avançado.
+    
+    Args:
+        ocr_enabled: Se True, aplica OCR no PDF final          # ===== ADICIONAR =====
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
     
     **CORRIGIDO: Gerenciamento adequado de browser e tratamento de KeyboardInterrupt**
     """
@@ -310,10 +316,16 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
         return False
     
     file_name = os.path.basename(save_path)
-    browser = None  # ========== IMPORTANTE: Inicializa browser ==========
+    browser = None
     
     try:
         logging.info(f"🚀 Iniciando download Playwright: {file_name}")
+        
+        # ===== ADICIONAR: MENSAGEM SOBRE OCR =====
+        if ocr_enabled:
+            print(f"  🔍 OCR ativo ({ocr_lang})")
+        # ===== FIM DA ADIÇÃO =====
+        
         print(f"  📄 Processando: {file_name[:60]}...")
         
         # Obter URL do arquivo
@@ -346,49 +358,51 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 await page.evaluate("document.body.style.zoom = '2.0';")
                 await asyncio.sleep(2)
                 
+                # ===== MODIFICAR: PASSAR PARÂMETROS OCR =====
                 # Extrair blobs via canvas
-                pdf_data, actual_pages = await _extract_blobs_to_pdf(page, file_name)
+                pdf_data, actual_pages = await _extract_blobs_to_pdf(
+                    page, file_name, ocr_enabled, ocr_lang  # ===== ADICIONAR =====
+                )
+                # ===== FIM DA MODIFICAÇÃO =====
                 
                 # Salvar PDF
                 with open(save_path, 'wb') as f:
                     f.write(pdf_data)
                 
                 file_size = os.path.getsize(save_path)
-                print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({actual_pages} páginas)")
-                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas)")
+                
+                # ===== ADICIONAR: MENSAGEM COM STATUS OCR =====
+                ocr_status = "com OCR" if ocr_enabled else "sem OCR"
+                print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({actual_pages} páginas, {ocr_status})")
+                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {ocr_status})")
+                # ===== FIM DA ADIÇÃO =====
                 
                 return True
             
             finally:
-                # ========== CORREÇÃO: Cleanup adequado do browser ==========
                 try:
                     await browser.close()
                 except Exception as e:
                     logging.debug(f"Erro ao fechar browser: {e}")
-                # ===========================================================
     
-    # ========== CORRIGIDO: Tratamento adequado de interrupções ==========
     except (KeyboardInterrupt, SystemExit):
-        # KeyboardInterrupt deve propagar IMEDIATAMENTE sem cleanup
         logging.info(f"Interrupção detectada durante download: {file_name}")
-        print(f"    ⚠️  Interrompido: {file_name}")
-        raise  # Propaga imediatamente para sys.exit()
+        print(f"    ⚠️ Interrompido: {file_name}")
+        raise
     
     except asyncio.CancelledError:
         logging.info(f"Download cancelado: {file_name}")
-        print(f"    ⚠️  Cancelado: {file_name}")
+        print(f"    ⚠️ Cancelado: {file_name}")
         if browser:
             try:
                 await browser.close()
             except:
                 pass
         return False
-    # =====================================================================
     
     except Exception as e:
         logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
         print(f"    ✗ Erro: {type(e).__name__}")
-        # Cleanup do browser em caso de erro
         if browser:
             try:
                 await browser.close()
@@ -647,8 +661,17 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
         print(f"    ℹ️ Última contagem: {loaded} páginas")
 
 
-async def _extract_blobs_to_pdf(page: Page, file_name: str) -> tuple[bytes, int]:
-    """Extrai blobs via canvas e converte para PDF com PIL (SEM jsPDF).
+async def _extract_blobs_to_pdf(page: Page, file_name: str,
+                                ocr_enabled: bool = False,        # ===== ADICIONAR =====
+                                ocr_lang: str = "por+eng") -> tuple[bytes, int]:  # ===== ADICIONAR =====
+    """
+    Extrai blobs via canvas e converte para PDF com OCR opcional.
+    
+    Args:
+        page: Página do Playwright
+        file_name: Nome do arquivo (para log)
+        ocr_enabled: Se True, aplica OCR no PDF              # ===== ADICIONAR =====
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
     
     Returns:
         tuple[bytes, int]: (PDF bytes, número de páginas)
@@ -716,7 +739,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str) -> tuple[bytes, int]
             
             pil_images.append(pil_img)
             
-            # Progresso a cada 5 páginas (menos output = mais rápido)
+            # Progresso a cada 5 páginas
             if (idx + 1) % 5 == 0 or (idx + 1) == len(data_urls):
                 print(f"      ✓ {idx + 1}/{len(data_urls)} páginas")
         except Exception as e:
@@ -725,21 +748,206 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str) -> tuple[bytes, int]
     if not pil_images:
         raise Exception('Falha ao converter imagens')
     
-    # Cria PDF com PIL
+    # ===== ADICIONAR: LÓGICA DE OCR =====
+    pdf_buf = BytesIO()
+    
+    if ocr_enabled:
+        print(f"    🔍 Aplicando OCR ({ocr_lang})...")
+        try:
+            pdf_bytes = _create_pdf_with_ocr(pil_images, ocr_lang)
+            pdf_buf.write(pdf_bytes)
+        except Exception as e:
+            logging.error(f"Erro ao aplicar OCR: {e}")
+            logging.warning("Criando PDF sem OCR")
+            # Fallback: cria sem OCR
+            if len(pil_images) == 1:
+                pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
+            else:
+                pil_images[0].save(
+                    pdf_buf,
+                    'PDF',
+                    save_all=True,
+                    append_images=pil_images[1:],
+                    resolution=100.0
+                )
+    else:
+        # Cria PDF sem OCR (código original)
+        if len(pil_images) == 1:
+            pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
+        else:
+            pil_images[0].save(
+                pdf_buf,
+                'PDF',
+                save_all=True,
+                append_images=pil_images[1:],
+                resolution=100.0
+            )
+    
+    status = "com OCR" if ocr_enabled else "sem OCR"
+    print(f"    ✓ PDF criado {status} ({len(pil_images)} páginas)")
+    # ===== FIM DA ADIÇÃO =====
+    
+    return (pdf_buf.getvalue(), len(pil_images))
+
+# ============================================================================
+# OCR SUPPORT
+# ============================================================================
+
+def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
+    """
+    Cria PDF com OCR usando pytesseract + reportlab.
+    
+    Métodos disponíveis (em ordem de preferência):
+    1. ocrmypdf - Melhor qualidade, mais lento
+    2. pytesseract + reportlab - Rápido, boa qualidade
+    3. img2pdf + pytesseract - Fallback
+    
+    Args:
+        pil_images: Lista de imagens PIL
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
+    
+    Returns:
+        PDF bytes com camada de texto OCR
+    """
+    
+    # Método 1: OCRmyPDF (RECOMENDADO)
+    try:
+        import ocrmypdf
+        from tempfile import NamedTemporaryFile
+        
+        print("      🔍 Usando OCRmyPDF (alta qualidade)...")
+        
+        # Salva imagens como PDF temporário
+        temp_input = NamedTemporaryFile(suffix='.pdf', delete=False)
+        temp_output = NamedTemporaryFile(suffix='.pdf', delete=False)
+        
+        try:
+            # Cria PDF inicial sem OCR
+            if len(pil_images) == 1:
+                pil_images[0].save(temp_input.name, 'PDF')
+            else:
+                pil_images[0].save(temp_input.name, 'PDF', save_all=True,
+                                  append_images=pil_images[1:])
+            temp_input.close()
+            
+            # Aplica OCR
+            ocrmypdf.ocr(
+                temp_input.name,
+                temp_output.name,
+                language=ocr_lang,
+                deskew=True,
+                optimize=1,
+                progress_bar=False,
+                force_ocr=True
+            )
+            
+            # Lê resultado
+            with open(temp_output.name, 'rb') as f:
+                pdf_bytes = f.read()
+            
+            print(f"      ✓ OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)")
+            return pdf_bytes
+            
+        finally:
+            # Cleanup
+            import os
+            try:
+                os.unlink(temp_input.name)
+                os.unlink(temp_output.name)
+            except:
+                pass
+    
+    except ImportError:
+        logging.info("ocrmypdf não disponível, tentando pytesseract...")
+    except Exception as e:
+        logging.warning(f"Erro com ocrmypdf: {e}, tentando pytesseract...")
+    
+    # Método 2: pytesseract + reportlab
+    try:
+        import pytesseract
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.utils import ImageReader
+        from tempfile import NamedTemporaryFile
+        
+        print("      🔍 Usando pytesseract + reportlab...")
+        
+        temp_pdf = NamedTemporaryFile(suffix='.pdf', delete=False)
+        
+        try:
+            c = canvas.Canvas(temp_pdf.name)
+            
+            for idx, img in enumerate(pil_images):
+                # Dimensões da página
+                width, height = img.size
+                c.setPageSize((width, height))
+                
+                # Desenha imagem
+                img_reader = ImageReader(img)
+                c.drawImage(img_reader, 0, 0, width, height)
+                
+                # Extrai texto via OCR
+                try:
+                    ocr_data = pytesseract.image_to_data(
+                        img, 
+                        lang=ocr_lang,
+                        output_type=pytesseract.Output.DICT
+                    )
+                    
+                    # Adiciona texto invisível na posição correta
+                    c.setFillColorRGB(0, 0, 0, alpha=0.0)  # Texto invisível
+                    
+                    for i, text in enumerate(ocr_data['text']):
+                        if text.strip():
+                            x = ocr_data['left'][i]
+                            y = height - ocr_data['top'][i]  # Inverte Y
+                            w = ocr_data['width'][i]
+                            h = ocr_data['height'][i]
+                            
+                            # Adiciona texto
+                            c.setFont("Helvetica", max(h * 0.8, 1))
+                            c.drawString(x, y, text)
+                    
+                    if (idx + 1) % 3 == 0:
+                        print(f"        OCR: {idx + 1}/{len(pil_images)}")
+                
+                except Exception as e:
+                    logging.warning(f"Erro OCR página {idx + 1}: {e}")
+                
+                c.showPage()
+            
+            c.save()
+            
+            # Lê resultado
+            with open(temp_pdf.name, 'rb') as f:
+                pdf_bytes = f.read()
+            
+            print(f"      ✓ OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)")
+            return pdf_bytes
+            
+        finally:
+            import os
+            try:
+                os.unlink(temp_pdf.name)
+            except:
+                pass
+    
+    except ImportError:
+        logging.error("pytesseract não disponível. Instale: pip install pytesseract")
+        logging.error("Tesseract-OCR também é necessário: https://github.com/tesseract-ocr/tesseract")
+    except Exception as e:
+        logging.error(f"Erro com pytesseract: {e}")
+    
+    # Fallback: PDF sem OCR
+    logging.warning("OCR falhou, criando PDF sem camada de texto")
     pdf_buf = BytesIO()
     if len(pil_images) == 1:
         pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
     else:
-        pil_images[0].save(
-            pdf_buf,
-            'PDF',
-            save_all=True,
-            append_images=pil_images[1:],
-            resolution=100.0
-        )
+        pil_images[0].save(pdf_buf, 'PDF', save_all=True,
+                          append_images=pil_images[1:], resolution=100.0)
     
-    print(f"    ✓ PDF criado com {len(pil_images)} páginas")
-    return (pdf_buf.getvalue(), len(pil_images))
+    return pdf_buf.getvalue()
 
 
 # ============================================================================
@@ -884,25 +1092,38 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
 # ============================================================================
 
 def download_view_only_pdf(service, file_id: str, save_path: str, 
-                          temp_download_dir: str, scroll_speed: int = 50) -> bool:
+                          temp_download_dir: str, scroll_speed: int = 50,
+                          ocr_enabled: bool = False,        # ===== ADICIONAR =====
+                          ocr_lang: str = "por+eng") -> bool:  # ===== ADICIONAR =====
     """
     Função principal para download de PDFs view-only.
     Usa automaticamente o melhor método disponível (Playwright > Selenium).
+    
+    Args:
+        service: Serviço autenticado do Google Drive
+        file_id: ID do arquivo no Google Drive
+        save_path: Caminho onde salvar o PDF
+        temp_download_dir: Diretório temporário
+        scroll_speed: Velocidade do scroll (30-70)
+        ocr_enabled: Se True, aplica OCR no PDF final          # ===== ADICIONAR =====
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
     
     **CORRIGIDO: Event loop simplificado para permitir cancelamento instantâneo**
     """
     if PLAYWRIGHT_AVAILABLE:
         try:
-            # Usa asyncio.run() que cria e limpa o loop automaticamente
-            # Isso garante que Ctrl+C seja tratado adequadamente
+            # ===== MODIFICAR: PASSAR PARÂMETROS OCR =====
             return asyncio.run(
-                download_view_only_pdf_playwright(service, file_id, save_path, temp_download_dir, scroll_speed)
+                download_view_only_pdf_playwright(
+                    service, file_id, save_path, temp_download_dir, 
+                    scroll_speed, ocr_enabled, ocr_lang  # ===== ADICIONAR =====
+                )
             )
+            # ===== FIM DA MODIFICAÇÃO =====
         
         except KeyboardInterrupt:
-            # KeyboardInterrupt sempre passa através de asyncio.run()
             logging.info("Download interrompido pelo usuário (Ctrl+C)")
-            raise  # Re-raise para propagação adequada
+            raise
         
         except asyncio.CancelledError:
             logging.info("Task assíncrona cancelada")
