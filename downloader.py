@@ -358,7 +358,9 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                                            ocr_enabled: bool = False,
                                            ocr_lang: str = "por+eng",
                                            progress_mgr=None,
-                                           task_id=None) -> bool:
+                                           task_id=None,
+                                           pdf_number: int = 1,
+                                           total_pdfs: int = 1) -> bool:
     """
     Download de PDFs view-only usando Playwright com técnicas modernas de 2025.
     Método principal: canvas-based blob extraction com stealth avançado.
@@ -368,6 +370,8 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
         ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
         progress_mgr: Rich Progress manager (opcional)
         task_id: ID da task no Progress (opcional)
+        pdf_number: Número do PDF atual (para progresso)
+        total_pdfs: Total de PDFs (para progresso)
 
     **CORRIGIDO: Gerenciamento adequado de browser e tratamento de KeyboardInterrupt**
     """
@@ -379,14 +383,15 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
     browser = None
 
     # Helper para atualizar progresso
-    def update_progress(description: str, percent: int = 0):
+    def update_progress(step_description: str, percent: int = 0):
         if progress_mgr and task_id is not None:
-            progress_mgr.update(task_id, description=description, completed=percent)
+            prefix = f"[blue]PDF {pdf_number}/{total_pdfs}:[/blue] {file_name[:45]}"
+            progress_mgr.update(task_id, description=f"{prefix} - {step_description}", completed=percent)
 
     try:
         logging.info(f"🚀 Iniciando download Playwright: {file_name}")
 
-        update_progress(f"[blue]{file_name[:60]}[/blue] - Carregando...", 5)
+        update_progress("Carregando...", 5)
 
         # Obter URL do arquivo
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
@@ -396,45 +401,48 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
 
         async with async_playwright() as p:
             try:
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Abrindo navegador...", 10)
+                update_progress("Abrindo navegador...", 10)
                 browser = await _launch_stealth_browser(p)
                 page = await _create_stealth_page(browser)
 
                 # Navegar para o PDF
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Navegando...", 15)
+                update_progress("Navegando...", 15)
                 await page.goto(view_url, wait_until='networkidle', timeout=60000)
                 await asyncio.sleep(8)
 
                 # Detectar número total de páginas
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Detectando páginas...", 20)
+                update_progress("Detectando páginas...", 20)
                 total_pages = await _detect_total_pages(page)
                 if total_pages == 0:
                     raise Exception("Não foi possível detectar páginas do documento")
 
                 # Forçar carregamento completo via scroll inteligente
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando scroll ({total_pages}p)...", 25)
-                await _intelligent_scroll_load(page, total_pages, scroll_speed, progress_mgr, task_id, file_name)
+                update_progress(f"Aplicando scroll ({total_pages}p)...", 25)
+                await _intelligent_scroll_load(page, total_pages, scroll_speed, progress_mgr, task_id, file_name, pdf_number, total_pdfs)
 
                 # Aplicar zoom para melhor qualidade
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando zoom...", 70)
+                update_progress("Aplicando zoom...", 70)
                 await page.evaluate("document.body.style.zoom = '2.0';")
                 await asyncio.sleep(2)
 
                 # Extrair blobs via canvas
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Extraindo imagens...", 75)
+                update_progress("Extraindo imagens...", 75)
                 pdf_data, actual_pages = await _extract_blobs_to_pdf(
                     page, file_name, ocr_enabled, ocr_lang,
-                    progress_mgr, task_id
+                    progress_mgr, task_id, pdf_number, total_pdfs
                 )
 
                 # Salvar PDF
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Salvando PDF...", 95)
+                update_progress("Salvando PDF...", 95)
                 with open(save_path, 'wb') as f:
                     f.write(pdf_data)
 
                 file_size = os.path.getsize(save_path)
 
-                update_progress(f"[green]{file_name[:60]}[/green] - Completo ({actual_pages}p, {file_size/1024/1024:.1f}MB)", 100)
+                # Atualização final com cor verde usando chamada direta
+                if progress_mgr and task_id is not None:
+                    progress_mgr.update(task_id, description=f"[green]PDF {pdf_number}/{total_pdfs}:[/green] {file_name[:45]} - Completo ({actual_pages}p, {file_size/1024/1024:.1f}MB)", completed=100)
+
                 logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {'com OCR' if ocr_enabled else 'sem OCR'})")
 
                 return True
@@ -633,7 +641,8 @@ async def _detect_total_pages(page: Page) -> int:
 
 
 async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed: int = 50,
-                                   progress_mgr=None, task_id=None, file_name: str = ""):
+                                   progress_mgr=None, task_id=None, file_name: str = "",
+                                   pdf_number: int = 1, total_pdfs: int = 1):
     """Scroll com PyAutoGUI (controle real do mouse do sistema operacional).
 
     Args:
@@ -643,12 +652,15 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
         progress_mgr: Rich Progress manager (opcional)
         task_id: ID da task no Progress (opcional)
         file_name: Nome do arquivo (para progresso)
+        pdf_number: Número do PDF atual
+        total_pdfs: Total de PDFs
     """
 
     # Helper para atualizar progresso
-    def update_progress(description: str, percent: int = 25):
+    def update_progress(step_description: str, percent: int = 25):
         if progress_mgr and task_id is not None:
-            progress_mgr.update(task_id, description=description, completed=percent)
+            prefix = f"[blue]PDF {pdf_number}/{total_pdfs}:[/blue] {file_name[:45]}"
+            progress_mgr.update(task_id, description=f"{prefix} - {step_description}", completed=percent)
 
     if not PYAUTOGUI_AVAILABLE:
         ui.warning("PyAutoGUI não disponível - instale: pip install pyautogui", indent=2)
@@ -659,7 +671,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
         ui.info("Scroll PyAutoGUI (otimizado)", emoji="🖱️", indent=2)
         ui.scroll_warning(indent=2)
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Preparando scroll...", 30)
+    update_progress("Preparando scroll...", 30)
     await asyncio.sleep(1)
 
     # Traz foco para a janela
@@ -670,7 +682,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
     except Exception as e:
         logging.debug(f"Erro ao dar foco: {e}")
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Scrolling (não mova o mouse)...", 35)
+    update_progress("Scrolling (não mova o mouse)...", 35)
 
     loaded = 0
     last = 0
@@ -693,7 +705,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
                 if iteration % 50 == 0:
                     # Calcula progresso: 35% a 65% baseado nas páginas carregadas
                     progress_percent = min(35 + int((loaded / max(expected_pages, 1)) * 30), 65)
-                    update_progress(f"[blue]{file_name[:60]}[/blue] - Scrolling ({loaded}p, iter {iteration})...", progress_percent)
+                    update_progress(f"Scrolling ({loaded}p, iter {iteration})...", progress_percent)
 
                 # Verifica fim do documento
                 at_bottom = await page.evaluate("""() => {
@@ -710,7 +722,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
                         at_bottom_count = 0
 
                     if stable_count >= 3 and at_bottom_count >= 2 and iteration > 80:
-                        update_progress(f"[blue]{file_name[:60]}[/blue] - Scroll completo ({loaded}p)", 65)
+                        update_progress(f"Scroll completo ({loaded}p)", 65)
                         break
                 else:
                     stable_count = 0
@@ -725,10 +737,10 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
             except:
                 pass
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Aguardando estabilização...", 66)
+    update_progress("Aguardando estabilização...", 66)
     await asyncio.sleep(2)
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Re-scrolling...", 67)
+    update_progress("Re-scrolling...", 67)
     pyautogui.press('home')
     await asyncio.sleep(1)
 
@@ -749,7 +761,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
             });
             return unique.size;
         }""")
-        update_progress(f"[blue]{file_name[:60]}[/blue] - {final} páginas carregadas", 68)
+        update_progress(f"{final} páginas carregadas", 68)
     except Exception as e:
         logging.debug(f"Erro ao contar páginas finais: {e}")
 
@@ -758,7 +770,9 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                                 ocr_enabled: bool = False,
                                 ocr_lang: str = "por+eng",
                                 progress_mgr=None,
-                                task_id=None) -> tuple[bytes, int]:
+                                task_id=None,
+                                pdf_number: int = 1,
+                                total_pdfs: int = 1) -> tuple[bytes, int]:
     """
     Extrai blobs via canvas e converte para PDF com OCR opcional.
 
@@ -769,20 +783,23 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
         ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
         progress_mgr: Rich Progress manager (opcional)
         task_id: ID da task no Progress (opcional)
+        pdf_number: Número do PDF atual
+        total_pdfs: Total de PDFs
 
     Returns:
         tuple[bytes, int]: (PDF bytes, número de páginas)
     """
     # Helper para atualizar progresso
-    def update_progress(description: str, percent: int = 75):
+    def update_progress(step_description: str, percent: int = 75):
         if progress_mgr and task_id is not None:
-            progress_mgr.update(task_id, description=description, completed=percent)
+            prefix = f"[blue]PDF {pdf_number}/{total_pdfs}:[/blue] {file_name[:45]}"
+            progress_mgr.update(task_id, description=f"{prefix} - {step_description}", completed=percent)
 
     from PIL import Image
     import base64
     from io import BytesIO
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Extraindo imagens...", 75)
+    update_progress("Extraindo imagens...", 75)
 
     # Extrai blobs como data URLs via canvas
     data_urls = await page.evaluate("""async () => {
@@ -823,7 +840,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
     if not data_urls or len(data_urls) == 0:
         raise Exception('Nenhuma página encontrada para extrair')
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - Convertendo {len(data_urls)}p para PDF...", 78)
+    update_progress(f"Convertendo {len(data_urls)}p para PDF...", 78)
 
     # Converte data URLs para PIL Images (otimizado)
     pil_images = []
@@ -845,7 +862,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
             if (idx + 1) % 10 == 0 or (idx + 1) == len(data_urls):
                 # 78% a 85% baseado no progresso
                 progress_percent = 78 + int(((idx + 1) / len(data_urls)) * 7)
-                update_progress(f"[blue]{file_name[:60]}[/blue] - Convertendo ({idx + 1}/{len(data_urls)}p)...", progress_percent)
+                update_progress(f"Convertendo ({idx + 1}/{len(data_urls)}p)...", progress_percent)
         except Exception as e:
             logging.warning(f"Erro página {idx + 1}: {e}")
 
@@ -855,7 +872,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
     pdf_buf = BytesIO()
 
     if ocr_enabled:
-        update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando OCR ({ocr_lang})...", 86)
+        update_progress(f"Aplicando OCR ({ocr_lang})...", 86)
         try:
             pdf_bytes = _create_pdf_with_ocr(pil_images, ocr_lang)
             pdf_buf.write(pdf_bytes)
@@ -888,7 +905,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 quality=95          # ✅ ADICIONADO
             )
 
-    update_progress(f"[blue]{file_name[:60]}[/blue] - PDF criado ({len(pil_images)}p)", 90)
+    update_progress(f"PDF criado ({len(pil_images)}p)", 90)
 
     return (pdf_buf.getvalue(), len(pil_images))
 
@@ -1355,7 +1372,9 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
                           ocr_enabled: bool = False,
                           ocr_lang: str = "por+eng",
                           progress_mgr=None,
-                          task_id=None) -> bool:
+                          task_id=None,
+                          pdf_number: int = 1,
+                          total_pdfs: int = 1) -> bool:
     """
     Função principal para download de PDFs view-only.
     Usa automaticamente o melhor método disponível (Playwright > Selenium).
@@ -1370,6 +1389,8 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
         ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
         progress_mgr: Rich Progress manager (opcional)
         task_id: ID da task no Progress (opcional)
+        pdf_number: Número do PDF atual (para progresso)
+        total_pdfs: Total de PDFs (para progresso)
 
     **CORRIGIDO: Event loop simplificado para permitir cancelamento instantâneo**
     """
@@ -1379,7 +1400,7 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
                 download_view_only_pdf_playwright(
                     service, file_id, save_path, temp_download_dir,
                     scroll_speed, ocr_enabled, ocr_lang,
-                    progress_mgr, task_id
+                    progress_mgr, task_id, pdf_number, total_pdfs
                 )
             )
 

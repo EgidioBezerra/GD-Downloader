@@ -20,6 +20,7 @@ tqdm
 requests
 urllib3
 Pillow
+pyautogui
 
-# Processamento (opcional)
-PyPDF2
+# OCR - Torna PDFs pesquisáveis (requer Tesseract instalado no sistema)
+ocrmypdf

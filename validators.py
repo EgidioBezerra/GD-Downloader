@@ -272,28 +272,3 @@ def validate_credentials_file(filename: str = 'credentials.json') -> bool:
         )
 
 
-def sanitize_filename(filename: str, max_length: int = 255) -> str:
-    """
-    Sanitiza nome de arquivo removendo caracteres inválidos.
-    
-    Args:
-        filename: Nome do arquivo original
-        max_length: Tamanho máximo do nome
-        
-    Returns:
-        Nome de arquivo sanitizado
-    """
-    # Remove caracteres inválidos para sistemas de arquivos
-    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]'
-    sanitized = re.sub(invalid_chars, '_', filename)
-    
-    # Remove espaços extras
-    sanitized = ' '.join(sanitized.split())
-    
-    # Trunca se necessário
-    if len(sanitized) > max_length:
-        name, ext = os.path.splitext(sanitized)
-        max_name_length = max_length - len(ext)
-        sanitized = name[:max_name_length] + ext
-    
-    return sanitized
