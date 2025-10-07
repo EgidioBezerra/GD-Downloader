@@ -41,9 +41,13 @@ from validators import (
     validate_workers, validate_gpu_option, validate_file_filters,
     validate_credentials_file, check_ffmpeg_installed
 )
+from i18n import init_i18n, get_i18n, t
 
 # Console Rich para interface
 console = Console()
+
+# I18n instance (will be initialized after parsing args)
+_i18n = None
 
 # Variáveis globais para checkpoint
 interrupted = False
@@ -181,10 +185,10 @@ def signal_handler(sig, frame):
 
     console.print("\n")
     console.print(Panel.fit(
-        "[bold yellow]Interrupção detectada![/bold yellow]\n"
-        "Salvando progresso para retomar...",
+        f"[bold yellow]{t('download.interrupt_detected')}[/bold yellow]\n"
+        f"{t('download.saving_progress')}",
         border_style="yellow",
-        title="Download Pausado"
+        title=t('download.paused')
     ))
 
     if checkpoint_mgr and current_folder_id and current_completed_files is not None:
@@ -196,11 +200,11 @@ def signal_handler(sig, frame):
         )
 
         if success:
-            console.print("\n[green]Checkpoint salvo com sucesso![/green]")
-            console.print("\n[cyan]Para retomar, execute:[/cyan]")
-            console.print("[bold]python main.py <URL> <DESTINO> --resume[/bold]\n")
+            console.print(f"\n[green]{t('download.checkpoint_saved')}[/green]")
+            console.print(f"\n[cyan]{t('download.resume_hint')}[/cyan]")
+            console.print(f"[bold]{t('download.resume_command')}[/bold]\n")
         else:
-            console.print("\n[red]Erro ao salvar checkpoint[/red]")
+            console.print(f"\n[red]{t('download.checkpoint_error')}[/red]")
 
     # ✅ CORRIGIDO: Levanta KeyboardInterrupt em vez de sys.exit(0)
     # Isso permite que os loops capturem e façam cleanup apropriado
@@ -209,24 +213,24 @@ def signal_handler(sig, frame):
 
 
 def show_legal_warning():
-    """Exibe aviso legal sobre arquivos view-only."""
+    """Display legal warning about view-only files."""
     warning_panel = Panel.fit(
-        "[bold yellow]AVISO LEGAL IMPORTANTE[/bold yellow]\n\n"
-        "Este programa pode baixar arquivos [bold]view-only[/bold] do Google Drive.\n"
-        "Isso pode violar os Termos de Serviço do Google.\n\n"
-        "[dim]Por favor, use este recurso apenas para:[/dim]\n"
-        "  • Backup de seus próprios arquivos\n"
-        "  • Conteúdo que você tem permissão explícita\n"
-        "  • Fins educacionais em ambiente controlado\n\n"
-        "[bold red]NÃO use para:[/bold red]\n"
-        "  • Pirataria de conteúdo protegido\n"
-        "  • Violação de direitos autorais\n"
-        "  • Download não autorizado de material proprietário\n\n"
-        "[dim]Os desenvolvedores não se responsabilizam pelo uso indevido.[/dim]",
+        f"[bold yellow]{t('legal.important')}[/bold yellow]\n\n"
+        f"{t('legal.line1')}\n"
+        f"{t('legal.line2')}\n\n"
+        f"[dim]{t('legal.please_use')}[/dim]\n"
+        f"  • {t('legal.use1')}\n"
+        f"  • {t('legal.use2')}\n"
+        f"  • {t('legal.use3')}\n\n"
+        f"[bold red]{t('legal.do_not_use')}[/bold red]\n"
+        f"  • {t('legal.dont1')}\n"
+        f"  • {t('legal.dont2')}\n"
+        f"  • {t('legal.dont3')}\n\n"
+        f"[dim]{t('legal.disclaimer')}[/dim]",
         border_style="yellow",
-        title="Responsabilidade Legal"
+        title=t('legal.title')
     )
-    
+
     console.print(warning_panel)
     console.print()
 
@@ -472,65 +476,90 @@ def video_worker(task, creds, gpu_flags, completed_files: Set[str], failed_files
 # ============================================================================
 
 def parse_arguments():
-    """Parse e valida argumentos da linha de comando."""
-    parser = argparse.ArgumentParser(
-        description="Google Drive Downloader - Download com pause/resume",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exemplos:
-  python main.py "URL_DA_PASTA" ./downloads
-  python main.py "URL" ./videos --only-videos --workers 15
-  python main.py "URL" ./docs --only-docs --resume
-  python main.py "URL" ./downloads --only-view-only --workers 20
-  
-  # ===== NOVOS EXEMPLOS COM OCR =====
-  python main.py "URL" ./pdfs --only-docs --ocr
-  python main.py "URL" ./pdfs --ocr --ocr-lang por
-  python main.py "URL" ./pdfs --ocr --ocr-lang eng
+    """
+    Parse and validate command line arguments with i18n support.
 
-Para mais informações, consulte: requirements_and_setup.md
-        """
+    This function does a two-pass parsing:
+    1. First pass: Extract --language flag
+    2. Initialize i18n with selected language
+    3. Second pass: Full argument parsing with localized help
+    """
+    # ========================================================================
+    # FIRST PASS: Get language preference
+    # ========================================================================
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument('--language', '--lang', type=str, default='en',
+                           choices=['en', 'pt'])
+    pre_args, _ = pre_parser.parse_known_args()
+
+    # Initialize i18n with selected language
+    global _i18n
+    _i18n = init_i18n(pre_args.language)
+
+    # ========================================================================
+    # SECOND PASS: Full argument parsing with i18n
+    # ========================================================================
+
+    # Build epilog with examples
+    epilog = t('help.examples_title') + "\n"
+    epilog += f"  {t('help.example_basic')}\n"
+    epilog += f"  {t('help.example_videos')}\n"
+    epilog += f"  {t('help.example_docs')}\n"
+    epilog += f"  {t('help.example_view_only')}\n"
+    epilog += f"  {t('help.example_ocr')}\n"
+    epilog += f"  {t('help.example_ocr_lang')}\n"
+    epilog += f"  {t('help.example_language')}\n"
+    epilog += t('help.more_info')
+
+    parser = argparse.ArgumentParser(
+        description=t('args.description'),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog
     )
-    
-    # Argumentos obrigatórios
-    parser.add_argument("folder_url", help="URL da pasta do Google Drive")
-    parser.add_argument("destination", help="Caminho de destino local")
-    
-    # Configurações de download
+
+    # Required arguments
+    parser.add_argument("folder_url", help=t('args.folder_url'))
+    parser.add_argument("destination", help=t('args.destination'))
+
+    # Download settings
     parser.add_argument("--workers", type=int, default=5,
-                       help="Número de downloads simultâneos (padrão: 5, máx: 20)")
+                       help=t('args.workers'))
     parser.add_argument("--gpu", type=str, choices=['nvidia', 'intel', 'amd'],
-                       help="Aceleração GPU para vídeos")
+                       help=t('args.gpu'))
     parser.add_argument("--scroll-speed", type=int, default=50,
-                       help="Velocidade do scroll para PDFs view-only (padrão: 50, recomendado: 30-70)")
-    
-    # ===== ADICIONAR AQUI: ARGUMENTOS OCR =====
+                       help=t('args.scroll_speed'))
+
+    # OCR options
     parser.add_argument("--ocr", action="store_true",
-                       help="Aplica OCR nos PDFs view-only para torná-los pesquisáveis (requer tesseract)")
+                       help=t('args.ocr'))
     parser.add_argument("--ocr-lang", type=str, default="por+eng",
-                       help="Idiomas para OCR (padrão: por+eng). Use 'por' para português, 'eng' para inglês, ou combine com +")
-    # ===== FIM DA ADIÇÃO OCR =====
-    
-    # Filtros de arquivo (podem ser combinados)
+                       help=t('args.ocr_lang'))
+
+    # File filters (can be combined)
     parser.add_argument("--only-view-only", action="store_true",
-                       help="Baixa apenas arquivos view-only")
+                       help=t('args.only_view_only'))
     parser.add_argument("--only-videos", action="store_true",
-                       help="Baixa apenas vídeos")
+                       help=t('args.only_videos'))
     parser.add_argument("--only-docs", action="store_true",
-                       help="Baixa apenas documentos (exclui vídeos)")
-    
-    # Controle de checkpoint
+                       help=t('args.only_docs'))
+
+    # Checkpoint control
     parser.add_argument("--resume", action="store_true",
-                       help="Retoma download anterior")
+                       help=t('args.resume'))
     parser.add_argument("--clear-checkpoint", action="store_true",
-                       help="Remove checkpoint e recomeça")
-    
-    # Debug
+                       help=t('args.clear_checkpoint'))
+
+    # Debug and misc
     parser.add_argument("--debug-html", action="store_true",
-                       help="Salva HTML das páginas para debug")
+                       help=t('args.debug_html'))
     parser.add_argument("--no-legal-warning", action="store_true",
-                       help="Suprime aviso legal (use com responsabilidade)")
-    
+                       help=t('args.no_legal_warning'))
+
+    # Language (already parsed, but include for help display)
+    parser.add_argument("--language", "--lang", type=str, default=pre_args.language,
+                       choices=['en', 'pt'],
+                       help=t('args.language'))
+
     return parser.parse_args()
 
 
@@ -619,39 +648,40 @@ def main():
     
     # Banner inicial
     console.print(Panel.fit(
-        "[bold cyan]Google Drive Downloader[/bold cyan]\n"
-        "[dim]Download inteligente com pause/resume[/dim]\n"
-        "[dim]Versão 2.5 - Interface Unificada[/dim]",
+        f"[bold cyan]{t('app.name')}[/bold cyan]\n"
+        f"[dim]{t('app.tagline')}[/dim]\n"
+        f"[dim]{t('app.version')}[/dim]",
         border_style="cyan",
-        title="Iniciando"
+        title=t('banner.starting')
     ))
-    
-    # ===== ADICIONAR AQUI: MENSAGEM OCR SE HABILITADO =====
+
+    # OCR enabled banner
     if args.ocr:
         console.print(Panel.fit(
-            "[bold green]OCR HABILITADO[/bold green]\n"
-            f"Idiomas: [cyan]{args.ocr_lang}[/cyan]\n"
-            "[dim]PDFs view-only serão processados com reconhecimento de texto[/dim]\n"
-            "[yellow]⚠ Isso tornará o download mais lento mas os PDFs serão pesquisáveis[/yellow]",
+            f"[bold green]{t('banner.ocr_enabled')}[/bold green]\n"
+            f"{t('banner.ocr_languages', langs=args.ocr_lang)}\n"
+            f"[dim]{t('banner.ocr_note')}[/dim]\n"
+            f"[yellow]{t('banner.ocr_warning')}[/yellow]",
             border_style="green",
-            title="OCR Ativo"
+            title=t('banner.ocr_active')
         ))
         console.print()
-    # ===== FIM DA ADIÇÃO =====
-    
-    # Mostra aviso legal (exceto se suprimido)
+
+    # Show legal warning (unless suppressed)
     if not args.no_legal_warning and (args.only_view_only or not args.only_docs):
         show_legal_warning()
-        
-        response = console.input("[yellow]Você compreende e aceita os riscos? (s/n):[/yellow] ")
-        if response.lower().strip() != 's':
-            console.print("[red]Download cancelado pelo usuário.[/red]")
+
+        # Get user input based on language
+        yes_answers = {'y', 's', 'yes', 'sim'}  # Support both en and pt
+        response = console.input(f"[yellow]{t('legal.question')}[/yellow] ")
+        if response.lower().strip() not in yes_answers:
+            console.print(f"[red]{t('legal.cancelled')}[/red]")
             return
         console.print()
-    
+
     try:
-        # Validações iniciais
-        console.print("[cyan]Validando entrada...[/cyan]")
+        # Initial validations
+        console.print(f"[cyan]{t('validation.validating')}[/cyan]")
         
         # Valida credenciais
         validate_credentials_file('credentials.json')
@@ -683,77 +713,79 @@ def main():
                 # Tenta verificar se tesseract está instalado
                 try:
                     pytesseract.get_tesseract_version()
-                    console.print("[green]✓ Tesseract OCR encontrado[/green]")
+                    console.print(f"[green]{t('validation.tesseract_found')}[/green]")
                 except Exception:
-                    console.print("[yellow]⚠ Tesseract não encontrado. Instale para usar OCR:[/yellow]")
-                    console.print("[dim]  Windows: https://github.com/UB-Mannheim/tesseract/wiki[/dim]")
-                    console.print("[dim]  Linux: sudo apt-get install tesseract-ocr[/dim]")
-                    console.print("[dim]  Mac: brew install tesseract[/dim]")
-                    
-                    response = console.input("\nContinuar sem OCR? (s/n): ")
-                    if response.lower().strip() != 's':
+                    console.print(f"[yellow]{t('validation.tesseract_not_found')}[/yellow]")
+                    console.print(f"[dim]{t('validation.tesseract_windows')}[/dim]")
+                    console.print(f"[dim]{t('validation.tesseract_linux')}[/dim]")
+                    console.print(f"[dim]{t('validation.tesseract_mac')}[/dim]")
+
+                    yes_answers = {'y', 's', 'yes', 'sim'}
+                    response = console.input(t('validation.continue_without_ocr'))
+                    if response.lower().strip() not in yes_answers:
                         return
-                    args.ocr = False  # Desabilita OCR
+                    args.ocr = False
             except ImportError:
-                console.print("[yellow]⚠ pytesseract não instalado. Instale: pip install pytesseract[/yellow]")
-                response = console.input("\nContinuar sem OCR? (s/n): ")
-                if response.lower().strip() != 's':
+                console.print(f"[yellow]{t('validation.pytesseract_not_found')}[/yellow]")
+                yes_answers = {'y', 's', 'yes', 'sim'}
+                response = console.input(t('validation.continue_without_ocr'))
+                if response.lower().strip() not in yes_answers:
                     return
-                args.ocr = False  # Desabilita OCR
-        # ===== FIM DA VALIDAÇÃO OCR =====
-        
-        # Verifica FFmpeg se necessário
+                args.ocr = False
+
+        # Check FFmpeg if needed
         if only_videos or not only_docs:
             try:
                 check_ffmpeg_installed()
             except FFmpegNotFoundError as e:
                 console.print(f"[yellow]{e.message}[/yellow]")
                 console.print(f"[dim]{e.details}[/dim]")
-                console.print("\n[yellow]Vídeos view-only não poderão ser baixados.[/yellow]")
-                
-                response = console.input("\nContinuar mesmo assim? (s/n): ")
-                if response.lower().strip() != 's':
+                console.print(f"\n[yellow]{t('validation.ffmpeg_warning')}[/yellow]")
+
+                yes_answers = {'y', 's', 'yes', 'sim'}
+                response = console.input(t('validation.continue_anyway'))
+                if response.lower().strip() not in yes_answers:
                     return
-        
-        console.print("[green]Validação concluída[/green]\n")
-        
+
+        console.print(f"[green]{t('validation.completed')}[/green]\n")
+
     except (InvalidURLError, ValidationError, FFmpegNotFoundError) as e:
-        console.print(f"\n[bold red]Erro de Validação:[/bold red]")
+        console.print(f"\n[bold red]{t('validation.error_title')}[/bold red]")
         console.print(f"[red]{e.message}[/red]")
         if hasattr(e, 'details') and e.details:
             console.print(f"[dim]{e.details}[/dim]")
         return
     except Exception as e:
-        console.print(f"\n[bold red]Erro inesperado:[/bold red] {e}")
+        console.print(f"\n[bold red]{t('errors.unexpected')}[/bold red] {e}")
         logging.exception("Erro durante validação")
         return
-    
-    # Inicializa checkpoint manager
+
+    # Initialize checkpoint manager
     checkpoint_mgr = CheckpointManager()
-    
-    # Autenticação
+
+    # Authentication
     try:
-        with console.status("[bold green]Autenticando..."):
+        with console.status(f"[bold green]{t('auth.authenticating')}"):
             service, creds = get_drive_service()
-            
+
         if not service or not creds:
-            raise AuthenticationError("Falha na autenticação")
-            
+            raise AuthenticationError("Authentication failed")
+
         if not creds.valid:
-            raise AuthenticationError("Credenciais inválidas")
-            
-        console.print("[green]Autenticado com sucesso[/green]")
-        
+            raise AuthenticationError("Invalid credentials")
+
+        console.print(f"[green]{t('auth.success')}[/green]")
+
     except (AuthenticationError, Exception) as e:
-        console.print(f"\n[bold red]Erro de Autenticação:[/bold red]")
+        console.print(f"\n[bold red]{t('auth.error_title')}[/bold red]")
         console.print(f"[red]{str(e)}[/red]")
-        console.print("\n[dim]Tente remover token.json e autenticar novamente[/dim]")
+        console.print(f"\n[dim]{t('auth.retry_hint')}[/dim]")
         return
-    
-    # Gerenciamento de checkpoint
+
+    # Checkpoint management
     if args.clear_checkpoint:
         checkpoint_mgr.clear_checkpoint(folder_id)
-        console.print("[yellow]Checkpoint removido[/yellow]\n")
+        console.print(f"[yellow]{t('checkpoint.removed')}[/yellow]\n")
     
     checkpoint = checkpoint_mgr.load_checkpoint(folder_id) if args.resume else None
     completed_files = set(checkpoint['completed_files']) if checkpoint else set()
