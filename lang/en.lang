@@ -28,7 +28,15 @@
     "clear_checkpoint": "Clear checkpoint and restart",
     "debug_html": "Save HTML pages for debugging",
     "no_legal_warning": "Suppress legal warning (use responsibly)",
-    "language": "Interface language (en/pt). Default: en"
+    "language": "Interface language (en/pt). Default: en",
+    "log_level": "Log level for file (default: INFO). Logs go to file only unless -v is used",
+    "verbose": "Show logs in console (-v: INFO, -vv: DEBUG, -vvv: DEBUG all)",
+    "quiet": "Force no console output (file only, even with -v)",
+    "log_file": "Custom log file path (default: download.log)",
+    "no_log_file": "Disable file logging completely",
+    "log_append": "Append to existing log instead of overwriting",
+    "log_rotate": "Enable automatic log rotation (10MB, keep 5)",
+    "no_color": "Disable colored console output"
   },
 
   "help": {

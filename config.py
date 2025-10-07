@@ -101,12 +101,31 @@ CHECKPOINT_SAVE_INTERVAL_VIDEOS = 5  # Salva a cada X vídeos
 CHECKPOINT_DIR = ".checkpoints"
 
 # ============================================================================
-# LOGGING
+# LOGGING - ADVANCED CONFIGURATION
 # ============================================================================
 
+# Default log file
 LOG_FILE = "download.log"
-LOG_LEVEL_FILE = "DEBUG"
-LOG_LEVEL_CONSOLE = "INFO"
+
+# Log levels (used as defaults)
+LOG_LEVEL_FILE_DEFAULT = "INFO"
+LOG_LEVEL_CONSOLE_DEFAULT = "WARNING"
+
+# Rotation settings
+LOG_ROTATE_SIZE = 10 * 1024 * 1024  # 10 MB
+LOG_ROTATE_COUNT = 5  # Keep 5 backup files
+
+# Format settings
+LOG_FORMAT_FILE = '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+LOG_FORMAT_CONSOLE = '%(levelname)s - %(message)s'
+LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+# Features
+LOG_COLORED_CONSOLE = True  # Enable colored console output by default
+LOG_FILTER_THIRD_PARTY = True  # Filter noisy third-party logs
+
+# Session logs (optional: for organizing logs by session)
+LOG_SESSION_DIR = "logs"  # Directory for session logs (if needed)
 
 # ============================================================================
 # VALIDAÇÃO
