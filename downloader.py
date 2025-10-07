@@ -513,7 +513,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int):
         return
     
     print("    🖱️ Scroll PyAutoGUI (otimizado)")
-    print("    ⚠ Não use mouse/teclado (~1 min)")
+    print("    ⚠ Não use mouse (~40s)")
     print("    ⏱️ Preparando...")
     await asyncio.sleep(1)
     
@@ -530,50 +530,71 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int):
     loaded = 0
     last = 0
     
-    # SCROLL OTIMIZADO: Adaptativo + 30 cliques
-    max_stable = 0
+    # SCROLL MÁXIMA VELOCIDADE: 50 cliques + infinito
     stable_count = 0
+    at_bottom_count = 0
+    iteration = 0
     
-    for i in range(2000):  # Aumentado para PDFs grandes
-        pyautogui.scroll(-30)  # 30 cliques (50% mais rápido)
+    print("    🚀 Modo: Velocidade máxima (50 cliques/scroll)")
+    
+    while True:  # Scroll infinito
+        pyautogui.scroll(-50)  # 50 cliques (era 30 = +66% velocidade)
+        iteration += 1
         
-        # Verifica a cada 15 (mais frequente)
-        if i % 15 == 0 and i > 0:
+        # Verifica a cada 10 (era 15 = +50% frequência)
+        if iteration % 10 == 0:
             try:
                 loaded = await page.evaluate("() => document.querySelectorAll('img[src^=\"blob:\"]').length")
                 
-                # Mostra progresso a cada 60
-                if i % 60 == 0:
-                    print(f"    📄 {loaded} páginas (scroll {i}/2000)...")
+                # Progresso a cada 50
+                if iteration % 50 == 0:
+                    print(f"    📄 {loaded} páginas (scroll {iteration})...")
                 
-                # Parada inteligente: estável por 3 verificações consecutivas
+                # Verifica fim do documento
+                at_bottom = await page.evaluate("""() => {
+                    return (window.innerHeight + window.scrollY) >= 
+                           (document.documentElement.scrollHeight - 100);
+                }""")
+                
+                # Parada: 3 estáveis + 2 no fim
                 if loaded == last and loaded > 0:
                     stable_count += 1
-                    if stable_count >= 3 and i > 100:  # 3 verificações estáveis
-                        print(f"    ✓ Estável em {loaded} páginas (scroll {i})")
+                    if at_bottom:
+                        at_bottom_count += 1
+                    else:
+                        at_bottom_count = 0
+                    
+                    if stable_count >= 3 and at_bottom_count >= 2 and iteration > 80:
+                        print(f"    ✓ Fim: {loaded} páginas (iter {iteration})")
                         break
                 else:
                     stable_count = 0
-                    
+                    at_bottom_count = 0
+                
                 last = loaded
+                
+                # Limite segurança
+                if iteration >= 5000:
+                    print(f"    ⚠ Limite (5000): {loaded} páginas")
+                    break
             except:
                 pass
     
-    print("    ⏳ Aguardando renderização (3s)...")
-    await asyncio.sleep(3)
+    print("    ⏳ Aguardando (2s)...")
+    await asyncio.sleep(2)
     
     print("    ⬆️ Voltando ao topo...")
     pyautogui.press('home')
     await asyncio.sleep(1)
     
-    # Re-scroll INSTANTÂNEO (sem sleep)
-    print("    🔄 Re-scroll verificação...")
-    for i in range(100):  # Reduzido de 150 para 100
-        pyautogui.scroll(-30)  # 30 cliques (3x mais rápido)
+    # Re-scroll ULTRA RÁPIDO
+    print("    🔄 Re-scroll...")
+    for i in range(80):  # 80 scrolls (era 100)
+        pyautogui.scroll(-50)  # 50 cliques (era 30)
     
-    await asyncio.sleep(1)  # Reduzido de 3s para 1s
+    await asyncio.sleep(0.5)  # 0.5s (era 1s)
     pyautogui.press('home')
-    await asyncio.sleep(1)  # Reduzido de 2s para 1s
+    await asyncio.sleep(0.5)  # 0.5s (era 1s)
     
     try:
         final = await page.evaluate("""() => {
