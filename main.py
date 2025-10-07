@@ -196,43 +196,7 @@ def signal_handler(sig, frame):
     
     interrupted = True
     
-    # ========== CORREÇÃO: Cancela tasks assíncronas pendentes ==========
-    import asyncio
-    try:
-        # Tenta obter o loop em execução
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # Se não há loop rodando, tenta get_event_loop
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = None
-        
-        if loop and not loop.is_closed():
-            # Cancela todas as tasks pendentes
-            pending = asyncio.all_tasks(loop)
-            if pending:
-                console.print(f"[dim]Cancelando {len(pending)} tasks assíncronas...[/dim]")
-                for task in pending:
-                    task.cancel()
-                
-                # Aguarda o cancelamento (com timeout)
-                try:
-                    loop.run_until_complete(
-                        asyncio.wait_for(
-                            asyncio.gather(*pending, return_exceptions=True),
-                            timeout=3.0
-                        )
-                    )
-                except asyncio.TimeoutError:
-                    console.print("[yellow]Timeout ao cancelar tasks[/yellow]")
-                except Exception as e:
-                    logging.debug(f"Erro ao cancelar tasks: {e}")
-    except Exception as e:
-        logging.debug(f"Erro no cleanup assíncrono: {e}")
-    # ===================================================================
-    
+    # Sai imediatamente - o cleanup será feito pelos context managers e finally blocks
     sys.exit(0)
 
 
@@ -461,6 +425,8 @@ Para mais informações, consulte: requirements_and_setup.md
                        help="Número de downloads simultâneos (padrão: 5, máx: 20)")
     parser.add_argument("--gpu", type=str, choices=['nvidia', 'intel', 'amd'],
                        help="Aceleração GPU para vídeos")
+    parser.add_argument("--scroll-speed", type=int, default=50,
+                       help="Velocidade do scroll para PDFs view-only (padrão: 50, recomendado: 30-70)")
     
     # Filtros de arquivo (podem ser combinados)
     parser.add_argument("--only-view-only", action="store_true",
@@ -859,7 +825,7 @@ def main():
                 successful += 1
                 continue
             
-            if download_view_only_pdf(service, file_info['id'], save_path, temp_download_dir):
+            if download_view_only_pdf(service, file_info['id'], save_path, temp_download_dir, args.scroll_speed):
                 successful += 1
                 completed_files.add(file_key)
                 console.print("  [green]Sucesso[/green]")
