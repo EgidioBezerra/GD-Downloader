@@ -384,7 +384,8 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 if browser:
                     try:
                         await browser.close()
-                    except:
+                    except Exception:
+                        # Suprime erros durante fechamento (ex: TargetClosedError)
                         pass
 
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
@@ -397,15 +398,21 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                     return False
 
             except Exception as e:
+                # Ignora TargetClosedError (esperado durante cancelamento)
+                error_name = type(e).__name__
+                if 'TargetClosedError' in error_name:
+                    logging.debug(f"Browser fechado durante operação: {file_name}")
+                    return False
+
                 # Cleanup do browser antes de sair do contexto async_playwright
                 if browser:
                     try:
                         await browser.close()
-                    except:
+                    except Exception:
                         pass
 
-                logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
-                print(f"    ✗ Erro: {type(e).__name__}")
+                logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {error_name}: {e}")
+                print(f"    ✗ Erro: {error_name}")
                 return False
 
             finally:
@@ -413,7 +420,8 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 if browser:
                     try:
                         await browser.close()
-                    except:
+                    except Exception:
+                        # Suprime erros durante fechamento
                         pass
 
     except (KeyboardInterrupt, SystemExit):
@@ -1176,10 +1184,22 @@ def run_async_with_cleanup(coro):
     - AttributeError: 'NoneType' object has no attribute 'close'
     - ERROR:asyncio:Task was destroyed but it is pending!
     - RuntimeError: coroutine ignored GeneratorExit
+    - Future exception was never retrieved (TargetClosedError)
     - Vazamento de recursos do Playwright em interrupções
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # Suprime logs de exceções em Futures durante cleanup
+    def exception_handler(loop, context):
+        exception = context.get('exception')
+        # Suprime erros esperados durante cancelamento
+        if isinstance(exception, (asyncio.CancelledError, Exception)):
+            # Log apenas em modo debug
+            if 'TargetClosedError' not in str(exception):
+                logging.debug(f"Exceção durante cleanup: {context.get('message', str(exception))}")
+
+    loop.set_exception_handler(exception_handler)
 
     main_task = None
 
@@ -1194,7 +1214,8 @@ def run_async_with_cleanup(coro):
             main_task.cancel()
             try:
                 loop.run_until_complete(main_task)
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
+                # Suprime exceções durante cancelamento
                 pass
 
         # Cancelar todas as tasks pendentes
@@ -1203,9 +1224,12 @@ def run_async_with_cleanup(coro):
             if not task.done():
                 task.cancel()
 
-        # Aguardar cancelamento das tasks
+        # Aguardar cancelamento das tasks (suprime exceções)
         if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            try:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
 
         raise  # Re-lança o KeyboardInterrupt
 
@@ -1216,7 +1240,7 @@ def run_async_with_cleanup(coro):
                 main_task.cancel()
                 try:
                     loop.run_until_complete(main_task)
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, Exception):
                     pass
 
             # Cleanup final: cancela tasks residuais
@@ -1226,10 +1250,17 @@ def run_async_with_cleanup(coro):
                     task.cancel()
 
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                try:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
 
             # Fecha o loop apropriadamente
-            loop.run_until_complete(loop.shutdown_asyncgens())
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+
             loop.close()
         except Exception as e:
             logging.debug(f"Erro durante cleanup do loop asyncio: {e}")
