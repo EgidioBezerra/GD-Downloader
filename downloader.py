@@ -861,7 +861,7 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                 temp_output.name,
                 language=ocr_lang,
                 # Qualidade e processamento
-                deskew=True,              # Corrige inclinação
+                deskew=False,              # Corrige inclinação
                 force_ocr=True,           # Força OCR mesmo se houver texto
                 skip_text=True,           # Ignora texto existente (evita duplicação)
                 redo_ocr=True,            # Refaz OCR completamente
