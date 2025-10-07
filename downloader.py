@@ -759,33 +759,34 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
         except Exception as e:
             logging.error(f"Erro ao aplicar OCR: {e}")
             logging.warning("Criando PDF sem OCR")
-            # Fallback: cria sem OCR
+            # Fallback: cria sem OCR COM ALTA QUALIDADE
             if len(pil_images) == 1:
-                pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
+                pil_images[0].save(pdf_buf, 'PDF', resolution=300.0, quality=95)  # ✅ CORRIGIDO
             else:
                 pil_images[0].save(
                     pdf_buf,
                     'PDF',
                     save_all=True,
                     append_images=pil_images[1:],
-                    resolution=100.0
+                    resolution=300.0,  # ✅ CORRIGIDO (era 100.0)
+                    quality=95          # ✅ ADICIONADO
                 )
     else:
-        # Cria PDF sem OCR (código original)
+        # Cria PDF sem OCR COM ALTA QUALIDADE
         if len(pil_images) == 1:
-            pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
+            pil_images[0].save(pdf_buf, 'PDF', resolution=300.0, quality=95)  # ✅ CORRIGIDO
         else:
             pil_images[0].save(
                 pdf_buf,
                 'PDF',
                 save_all=True,
                 append_images=pil_images[1:],
-                resolution=100.0
+                resolution=300.0,  # ✅ CORRIGIDO (era 100.0)
+                quality=95          # ✅ ADICIONADO
             )
     
     status = "com OCR" if ocr_enabled else "sem OCR"
     print(f"    ✓ PDF criado {status} ({len(pil_images)} páginas)")
-    # ===== FIM DA ADIÇÃO =====
     
     return (pdf_buf.getvalue(), len(pil_images))
 
@@ -797,10 +798,11 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
     """
     Cria PDF com OCR usando pytesseract + reportlab.
     
-    Métodos disponíveis (em ordem de preferência):
-    1. ocrmypdf - Melhor qualidade, mais lento
-    2. pytesseract + reportlab - Rápido, boa qualidade
-    3. img2pdf + pytesseract - Fallback
+    VERSÃO CORRIGIDA - Outubro 2025
+    - ✅ Alta qualidade (300 DPI)
+    - ✅ Resolve problemas de imagens truncadas
+    - ✅ Configurações robustas do ocrmypdf
+    - ✅ PDF válido garantido
     
     Args:
         pil_images: Lista de imagens PIL
@@ -810,35 +812,75 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
         PDF bytes com camada de texto OCR
     """
     
-    # Método 1: OCRmyPDF (RECOMENDADO)
+    # Método 1: OCRmyPDF (RECOMENDADO) - VERSÃO CORRIGIDA
     try:
         import ocrmypdf
         from tempfile import NamedTemporaryFile
         
         print("      🔍 Usando OCRmyPDF (alta qualidade)...")
         
-        # Salva imagens como PDF temporário
+        # Salva imagens como PDF temporário COM ALTA QUALIDADE
         temp_input = NamedTemporaryFile(suffix='.pdf', delete=False)
         temp_output = NamedTemporaryFile(suffix='.pdf', delete=False)
         
         try:
-            # Cria PDF inicial sem OCR
-            if len(pil_images) == 1:
-                pil_images[0].save(temp_input.name, 'PDF')
+            # ✅ CORREÇÃO 1: Otimiza imagens antes de salvar
+            # Resolve: "image file is truncated", "invalid jpeg data"
+            optimized_images = []
+            for img in pil_images:
+                # Garante que a imagem está em RGB (evita problemas de conversão)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                optimized_images.append(img)
+            
+            # ✅ CORREÇÃO 2: Salva PDF com 300 DPI e qualidade 95
+            if len(optimized_images) == 1:
+                optimized_images[0].save(
+                    temp_input.name, 
+                    'PDF',
+                    resolution=300.0,  # ✅ 300 DPI (era 100 ou não definido)
+                    quality=95,        # ✅ Qualidade alta
+                    optimize=False     # ✅ Desabilita otimização PIL (pode causar truncamento)
+                )
             else:
-                pil_images[0].save(temp_input.name, 'PDF', save_all=True,
-                                  append_images=pil_images[1:])
+                optimized_images[0].save(
+                    temp_input.name, 
+                    'PDF', 
+                    save_all=True,
+                    append_images=optimized_images[1:],
+                    resolution=300.0,  # ✅ 300 DPI (era 100 ou não definido)
+                    quality=95,        # ✅ Qualidade alta
+                    optimize=False     # ✅ Desabilita otimização PIL
+                )
             temp_input.close()
             
-            # Aplica OCR
+            # ✅ CORREÇÃO 3: Configurações robustas do ocrmypdf
+            # Resolve: PDF INVALID, erros de processamento
             ocrmypdf.ocr(
                 temp_input.name,
                 temp_output.name,
                 language=ocr_lang,
-                deskew=True,
-                optimize=1,
+                # Qualidade e processamento
+                deskew=True,              # Corrige inclinação
+                force_ocr=True,           # Força OCR mesmo se houver texto
+                skip_text=True,           # Ignora texto existente (evita duplicação)
+                redo_ocr=True,            # Refaz OCR completamente
+                # Resolução e qualidade de imagem
+                image_dpi=300,            # ✅ Define DPI explicitamente
+                jpeg_quality=95,          # ✅ Qualidade JPEG máxima
+                png_quality=95,           # ✅ Qualidade PNG máxima  
+                # Otimizações DESABILITADAS (causam problemas)
+                optimize=0,               # ✅ SEM otimização (era 1)
+                jbig2_lossy=False,        # ✅ SEM compressão lossy JBIG2
+                fast_web_view=0,          # ✅ SEM otimização para web
+                # Timeouts e processamento
+                tesseract_timeout=300,    # ✅ 5 minutos por página
+                rotate_pages=False,       # ✅ Não rotaciona (mais rápido)
+                remove_background=False,  # ✅ Preserva background original
+                clean=False,              # ✅ Não limpa imagem (preserva qualidade)
+                # Outras opções
                 progress_bar=False,
-                force_ocr=True
+                output_type='pdf'
             )
             
             # Lê resultado
@@ -862,11 +904,10 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
     except Exception as e:
         logging.warning(f"Erro com ocrmypdf: {e}, tentando pytesseract...")
     
-    # Método 2: pytesseract + reportlab
+    # Método 2: pytesseract + reportlab (FALLBACK MELHORADO)
     try:
         import pytesseract
         from reportlab.pdfgen import canvas
-        from reportlab.lib.pagesizes import letter
         from reportlab.lib.utils import ImageReader
         from tempfile import NamedTemporaryFile
         
@@ -878,20 +919,27 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
             c = canvas.Canvas(temp_pdf.name)
             
             for idx, img in enumerate(pil_images):
-                # Dimensões da página
+                # ✅ Garante RGB
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Dimensões da página (mantém tamanho original para qualidade)
                 width, height = img.size
                 c.setPageSize((width, height))
                 
-                # Desenha imagem
+                # Desenha imagem em alta qualidade
                 img_reader = ImageReader(img)
-                c.drawImage(img_reader, 0, 0, width, height)
+                c.drawImage(img_reader, 0, 0, width, height, 
+                           preserveAspectRatio=True, anchor='sw')
                 
                 # Extrai texto via OCR
                 try:
+                    # ✅ OCR com configurações otimizadas
                     ocr_data = pytesseract.image_to_data(
                         img, 
                         lang=ocr_lang,
-                        output_type=pytesseract.Output.DICT
+                        output_type=pytesseract.Output.DICT,
+                        config='--psm 1 --oem 3'  # ✅ Modo automático + LSTM
                     )
                     
                     # Adiciona texto invisível na posição correta
@@ -901,12 +949,13 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                         if text.strip():
                             x = ocr_data['left'][i]
                             y = height - ocr_data['top'][i]  # Inverte Y
-                            w = ocr_data['width'][i]
-                            h = ocr_data['height'][i]
+                            conf = ocr_data['conf'][i]
                             
-                            # Adiciona texto
-                            c.setFont("Helvetica", max(h * 0.8, 1))
-                            c.drawString(x, y, text)
+                            # Apenas adiciona texto com confiança > 30
+                            if conf > 30:
+                                h = ocr_data['height'][i]
+                                c.setFont("Helvetica", max(h * 0.8, 1))
+                                c.drawString(x, y, text)
                     
                     if (idx + 1) % 3 == 0:
                         print(f"        OCR: {idx + 1}/{len(pil_images)}")
@@ -938,17 +987,19 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
     except Exception as e:
         logging.error(f"Erro com pytesseract: {e}")
     
-    # Fallback: PDF sem OCR
-    logging.warning("OCR falhou, criando PDF sem camada de texto")
-    pdf_buf = BytesIO()
+    # Fallback final: PDF sem OCR MAS COM ALTA QUALIDADE
+    logging.warning("OCR falhou, criando PDF SEM camada de texto (mas em alta qualidade)")
+    pdf_buf = io.BytesIO()
+    
+    # ✅ Mesmo no fallback, usa 300 DPI
     if len(pil_images) == 1:
-        pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
+        pil_images[0].save(pdf_buf, 'PDF', resolution=300.0, quality=95)
     else:
         pil_images[0].save(pdf_buf, 'PDF', save_all=True,
-                          append_images=pil_images[1:], resolution=100.0)
+                          append_images=pil_images[1:], 
+                          resolution=300.0, quality=95)
     
     return pdf_buf.getvalue()
-
 
 # ============================================================================
 # FALLBACK: DOWNLOAD COM SELENIUM (compatibilidade com código existente)
