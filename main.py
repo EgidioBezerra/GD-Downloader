@@ -325,7 +325,7 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
             if batch._order:
                 batch.execute()
     
-    console.print(f"[green][/green] Mapeamento concluído: {len(download_queue)} arquivos encontrados")
+    console.print(f"[green]✓[/green] Mapeamento concluído: {len(download_queue)} arquivos encontrados")
 
 
 # ============================================================================
@@ -411,6 +411,11 @@ Exemplos:
   python main.py "URL" ./videos --only-videos --workers 15
   python main.py "URL" ./docs --only-docs --resume
   python main.py "URL" ./downloads --only-view-only --workers 20
+  
+  # ===== NOVOS EXEMPLOS COM OCR =====
+  python main.py "URL" ./pdfs --only-docs --ocr
+  python main.py "URL" ./pdfs --ocr --ocr-lang por
+  python main.py "URL" ./pdfs --ocr --ocr-lang eng
 
 Para mais informações, consulte: requirements_and_setup.md
         """
@@ -427,6 +432,13 @@ Para mais informações, consulte: requirements_and_setup.md
                        help="Aceleração GPU para vídeos")
     parser.add_argument("--scroll-speed", type=int, default=50,
                        help="Velocidade do scroll para PDFs view-only (padrão: 50, recomendado: 30-70)")
+    
+    # ===== ADICIONAR AQUI: ARGUMENTOS OCR =====
+    parser.add_argument("--ocr", action="store_true",
+                       help="Aplica OCR nos PDFs view-only para torná-los pesquisáveis (requer tesseract)")
+    parser.add_argument("--ocr-lang", type=str, default="por+eng",
+                       help="Idiomas para OCR (padrão: por+eng). Use 'por' para português, 'eng' para inglês, ou combine com +")
+    # ===== FIM DA ADIÇÃO OCR =====
     
     # Filtros de arquivo (podem ser combinados)
     parser.add_argument("--only-view-only", action="store_true",
@@ -543,6 +555,19 @@ def main():
         title="Iniciando"
     ))
     
+    # ===== ADICIONAR AQUI: MENSAGEM OCR SE HABILITADO =====
+    if args.ocr:
+        console.print(Panel.fit(
+            "[bold green]OCR HABILITADO[/bold green]\n"
+            f"Idiomas: [cyan]{args.ocr_lang}[/cyan]\n"
+            "[dim]PDFs view-only serão processados com reconhecimento de texto[/dim]\n"
+            "[yellow]⚠ Isso tornará o download mais lento mas os PDFs serão pesquisáveis[/yellow]",
+            border_style="green",
+            title="OCR Ativo"
+        ))
+        console.print()
+    # ===== FIM DA ADIÇÃO =====
+    
     # Mostra aviso legal (exceto se suprimido)
     if not args.no_legal_warning and (args.only_view_only or not args.only_docs):
         show_legal_warning()
@@ -579,6 +604,32 @@ def main():
             args.only_docs,
             args.only_view_only
         )
+        
+        # ===== ADICIONAR AQUI: VALIDAÇÃO OCR =====
+        if args.ocr:
+            try:
+                import pytesseract
+                # Tenta verificar se tesseract está instalado
+                try:
+                    pytesseract.get_tesseract_version()
+                    console.print("[green]✓ Tesseract OCR encontrado[/green]")
+                except Exception:
+                    console.print("[yellow]⚠ Tesseract não encontrado. Instale para usar OCR:[/yellow]")
+                    console.print("[dim]  Windows: https://github.com/UB-Mannheim/tesseract/wiki[/dim]")
+                    console.print("[dim]  Linux: sudo apt-get install tesseract-ocr[/dim]")
+                    console.print("[dim]  Mac: brew install tesseract[/dim]")
+                    
+                    response = console.input("\nContinuar sem OCR? (s/n): ")
+                    if response.lower().strip() != 's':
+                        return
+                    args.ocr = False  # Desabilita OCR
+            except ImportError:
+                console.print("[yellow]⚠ pytesseract não instalado. Instale: pip install pytesseract[/yellow]")
+                response = console.input("\nContinuar sem OCR? (s/n): ")
+                if response.lower().strip() != 's':
+                    return
+                args.ocr = False  # Desabilita OCR
+        # ===== FIM DA VALIDAÇÃO OCR =====
         
         # Verifica FFmpeg se necessário
         if only_videos or not only_docs:
@@ -709,11 +760,16 @@ def main():
     table.add_column("Quantidade", style="magenta", justify="right")
     table.add_column("Status", justify="center")
     
-    table.add_row("Downloads padrão", str(len(parallel_tasks)), "")
-    table.add_row("Vídeos view-only", str(len(video_view_only_tasks)), "")
-    table.add_row("PDFs view-only", str(len(pdf_view_only_tasks)), "")
-    table.add_row("Já completados", str(len(completed_files)), "")
-    table.add_row("Não suportados", str(len(unsupported_tasks)), "")
+    table.add_row("Downloads padrão", str(len(parallel_tasks)), "✓")
+    table.add_row("Vídeos view-only", str(len(video_view_only_tasks)), "✓")
+    
+    # ===== ADICIONAR AQUI: INDICADOR OCR NA TABELA =====
+    ocr_status = "🔍 OCR" if args.ocr else "✓"
+    table.add_row("PDFs view-only", str(len(pdf_view_only_tasks)), ocr_status)
+    # ===== FIM DA ADIÇÃO =====
+    
+    table.add_row("Já completados", str(len(completed_files)), "⏭")
+    table.add_row("Não suportados", str(len(unsupported_tasks)), "⊘")
     
     console.print(table)
     console.print()
@@ -807,6 +863,12 @@ def main():
     if pdf_view_only_tasks:
         console.print(f"\n[bold blue]Iniciando PDFs View-Only[/bold blue]")
         console.print(f"PDFs: {len(pdf_view_only_tasks)}")
+        
+        # ===== ADICIONAR AQUI: MENSAGEM SOBRE OCR =====
+        if args.ocr:
+            console.print(f"[green]🔍 OCR ativo ({args.ocr_lang})[/green] - PDFs serão pesquisáveis")
+        # ===== FIM DA ADIÇÃO =====
+        
         console.print("[yellow]Processamento automático (pode ser lento)[/yellow]\n")
         
         temp_download_dir = os.path.abspath("./temp_pdf_downloads")
@@ -825,13 +887,23 @@ def main():
                 successful += 1
                 continue
             
-            if download_view_only_pdf(service, file_info['id'], save_path, temp_download_dir, args.scroll_speed):
+            # ===== MODIFICAR AQUI: PASSAR PARÂMETROS OCR =====
+            if download_view_only_pdf(
+                service, 
+                file_info['id'], 
+                save_path, 
+                temp_download_dir, 
+                args.scroll_speed,
+                ocr_enabled=args.ocr,      # ADICIONAR
+                ocr_lang=args.ocr_lang     # ADICIONAR
+            ):
+            # ===== FIM DA MODIFICAÇÃO =====
                 successful += 1
                 completed_files.add(file_key)
-                console.print("  [green]Sucesso[/green]")
+                console.print("  [green]✓ Sucesso[/green]")
             else:
                 failed_files.add(file_key)
-                console.print("  [red]Falha[/red]")
+                console.print("  [red]✗ Falha[/red]")
             
             checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
                                           failed_files, current_destination_path)
