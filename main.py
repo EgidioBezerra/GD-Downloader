@@ -405,35 +405,65 @@ def download_worker(task, creds, completed_files: Set[str], failed_files: Set[st
         return False
 
 
-def video_worker(task, creds, gpu_flags, completed_files: Set[str], failed_files: Set[str]) -> bool:
-    """Worker para vídeos view-only."""
+def video_worker(task, creds, gpu_flags, completed_files: Set[str], failed_files: Set[str],
+                progress_mgr=None, task_id=None) -> bool:
+    """
+    Worker para vídeos view-only com suporte a progresso individual.
+
+    Args:
+        task: Tarefa de download
+        creds: Credenciais do Google Drive
+        gpu_flags: Flags de GPU para vídeo
+        completed_files: Set de arquivos completados
+        failed_files: Set de arquivos que falharam
+        progress_mgr: Gerenciador de progresso Rich (opcional)
+        task_id: ID da task Rich para atualizar progresso (opcional)
+    """
     try:
         file_info = task['file_info']
         save_path = task['save_path']
-        
+
         file_key = f"{file_info['id']}_{file_info['name']}"
-        
+
         if file_key in completed_files:
             return True
-        
+
+        # Callback para atualizar progresso na interface
+        def progress_callback(current, total, file_name):
+            if progress_mgr and task_id is not None:
+                percent = int((current / total) * 100) if total > 0 else 0
+                progress_mgr.update(
+                    task_id,
+                    description=f"[magenta]{file_name[:50]}[/magenta]",
+                    completed=percent
+                )
+
         result = download_view_only_video(
             creds,
             file_info['id'],
             file_info['name'],
             save_path,
+            show_progress=False,
+            progress_callback=progress_callback,
             **gpu_flags
         )
-        
+
         if result:
             completed_files.add(file_key)
+            if progress_mgr and task_id is not None:
+                progress_mgr.update(task_id, description="[green]✓ Aguardando...[/green]", completed=0)
         else:
             failed_files.add(file_key)
-        
+            if progress_mgr and task_id is not None:
+                progress_mgr.update(task_id, description="[red]✗ Erro[/red]", completed=0)
+
         return result
-        
+
     except Exception as e:
         logging.error(f"Erro no worker de vídeo: {e}")
         failed_files.add(f"{task['file_info']['id']}_{task['file_info']['name']}")
+        if progress_mgr and task_id is not None:
+            progress_mgr.update(task_id, description="[red]✗ Erro[/red]", completed=0)
         return False
 
 
@@ -971,39 +1001,106 @@ def main():
                 TimeRemainingColumn(),
                 console=console
             ) as progress:
-                task_id = progress.add_task("[magenta]Baixando vídeos...", total=len(video_view_only_tasks))
+                # ✅ Cria pool de Rich Progress tasks (um por worker)
+                worker_tasks = []
+                for i in range(video_workers):
+                    tid = progress.add_task(f"[dim]Worker {i+1}: Aguardando...[/dim]", total=100)
+                    worker_tasks.append(tid)
+
+                # ✅ Progresso global
+                global_task = progress.add_task(f"[bold magenta]Total:[/bold magenta]", total=len(video_view_only_tasks))
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=video_workers) as executor:
-                    task_worker = partial(video_worker, creds=creds, gpu_flags=gpu_flags,
-                                        completed_files=completed_files,
-                                        failed_files=failed_files)
+                    # ✅ Producer-consumer pattern
+                    import threading
+                    from queue import Queue
+                    available_workers = Queue()
+                    pending_tasks = Queue()
 
-                    futures = {executor.submit(task_worker, task): task for task in video_view_only_tasks}
+                    # Inicializa workers disponíveis
+                    for tid in worker_tasks:
+                        available_workers.put(tid)
+
+                    # Adiciona tarefas pendentes
+                    for task in video_view_only_tasks:
+                        pending_tasks.put(task)
+
+                    futures = {}
                     results = []
+                    submit_lock = threading.Lock()
+
+                    # ✅ Função para submeter próxima tarefa
+                    def submit_next_task():
+                        with submit_lock:
+                            if pending_tasks.empty() or available_workers.empty():
+                                return False
+
+                            tid = available_workers.get()
+                            task = pending_tasks.get()
+
+                            future = executor.submit(
+                                video_worker, task, creds, gpu_flags,
+                                completed_files, failed_files,
+                                progress, tid
+                            )
+                            futures[future] = (task, tid)
+                            return True
+
+                    # ✅ Submete tarefas iniciais (até video_workers)
+                    for _ in range(min(video_workers, len(video_view_only_tasks))):
+                        submit_next_task()
 
                     try:
-                        # Processa conforme completam (permite CTRL-C)
-                        for future in concurrent.futures.as_completed(futures):
-                            try:
-                                result = future.result()
-                                results.append(result)
-                                progress.update(task_id, advance=1)
+                        # ✅ Loop com timeout para permitir verificação de interrupted
+                        while len(results) < len(video_view_only_tasks):
+                            # Verifica flag de interrupção
+                            if interrupted:
+                                raise KeyboardInterrupt
 
-                                # Salva checkpoint a cada 5 vídeos
-                                if len(results) % 5 == 0:
-                                    checkpoint_mgr.save_checkpoint(folder_id, completed_files,
-                                                                  failed_files, current_destination_path)
-                            except Exception as e:
-                                logging.error(f"Erro ao processar resultado de vídeo: {e}")
-                                results.append(False)
+                            # Aguarda com timeout de 0.5s
+                            done, pending_futures = concurrent.futures.wait(
+                                futures.keys(),
+                                timeout=0.5,
+                                return_when=concurrent.futures.FIRST_COMPLETED
+                            )
+
+                            # Processa futures concluídos
+                            for future in done:
+                                with submit_lock:
+                                    task, tid = futures.pop(future)
+
+                                try:
+                                    result = future.result()
+                                    results.append(result)
+                                    progress.update(global_task, advance=1)
+
+                                    # Libera worker task_id
+                                    available_workers.put(tid)
+
+                                    # Submete próxima tarefa
+                                    submit_next_task()
+
+                                    # Salva checkpoint a cada 5 vídeos
+                                    if len(results) % 5 == 0:
+                                        checkpoint_mgr.save_checkpoint(
+                                            folder_id, completed_files,
+                                            failed_files, current_destination_path
+                                        )
+
+                                except Exception as e:
+                                    logging.error(f"Erro ao processar resultado de vídeo: {e}")
+                                    results.append(False)
+                                    # Libera worker e submete próxima
+                                    available_workers.put(tid)
+                                    submit_next_task()
 
                     except KeyboardInterrupt:
-                        console.print("\n[yellow]Interrupção detectada! Cancelando downloads de vídeos pendentes...[/yellow]")
+                        console.print("\n[yellow]Cancelando downloads de vídeos pendentes...[/yellow]")
                         # Cancela futures pendentes
                         for future in futures:
                             future.cancel()
                         # Aguarda cleanup
-                        concurrent.futures.wait(futures, timeout=5)
+                        concurrent.futures.wait(futures.keys(), timeout=5)
                         raise
 
                 # Salva checkpoint final
@@ -1020,55 +1117,91 @@ def main():
     if pdf_view_only_tasks:
         console.print(f"\n[bold blue]Iniciando PDFs View-Only[/bold blue]")
         console.print(f"PDFs: {len(pdf_view_only_tasks)}")
-        
-        # ===== ADICIONAR AQUI: MENSAGEM SOBRE OCR =====
+
         if args.ocr:
             console.print(f"[green]🔍 OCR ativo ({args.ocr_lang})[/green] - PDFs serão pesquisáveis")
-        # ===== FIM DA ADIÇÃO =====
-        
-        console.print("[yellow]Processamento automático (pode ser lento)[/yellow]\n")
-        
+
+        console.print("[yellow]Processamento automático (pode ser lento)[/yellow]")
+        console.print("[yellow]⚠ Não use mouse/teclado durante o scroll automático[/yellow]\n")
+
         temp_download_dir = os.path.abspath("./temp_pdf_downloads")
         os.makedirs(temp_download_dir, exist_ok=True)
 
-        successful = 0
-        for idx, task in enumerate(pdf_view_only_tasks, 1):
-            file_info = task['file_info']
-            save_path = task['save_path']
-            
-            console.print(f"[cyan]PDF {idx}/{len(pdf_view_only_tasks)}:[/cyan] {file_info['name'][:50]}...")
-            
-            file_key = f"{file_info['id']}_{file_info['name']}"
-            if file_key in completed_files:
-                console.print("  [green]Já baixado[/green]")
-                successful += 1
-                continue
-            
-            # ===== MODIFICAR AQUI: PASSAR PARÂMETROS OCR =====
-            if download_view_only_pdf(
-                service, 
-                file_info['id'], 
-                save_path, 
-                temp_download_dir, 
-                args.scroll_speed,
-                ocr_enabled=args.ocr,      # ADICIONAR
-                ocr_lang=args.ocr_lang     # ADICIONAR
-            ):
-            # ===== FIM DA MODIFICAÇÃO =====
-                successful += 1
-                completed_files.add(file_key)
-                console.print("  [green]✓ Sucesso[/green]")
-            else:
-                failed_files.add(file_key)
-                console.print("  [red]✗ Falha[/red]")
-            
-            checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
-                                          failed_files, current_destination_path)
-        
-        # Remove diretório temporário
-        if os.path.exists(temp_download_dir):
-            shutil.rmtree(temp_download_dir)
-        
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                # Task de progresso global
+                global_task = progress.add_task(
+                    f"[bold blue]Total:[/bold blue]",
+                    total=len(pdf_view_only_tasks)
+                )
+
+                # Task de status atual
+                status_task = progress.add_task(
+                    "[dim]Aguardando...[/dim]",
+                    total=100
+                )
+
+                successful = 0
+                for idx, task in enumerate(pdf_view_only_tasks, 1):
+                    if interrupted:
+                        raise KeyboardInterrupt
+
+                    file_info = task['file_info']
+                    save_path = task['save_path']
+                    file_name = file_info['name']
+
+                    # Atualiza status
+                    progress.update(
+                        status_task,
+                        description=f"[blue]{file_name[:60]}[/blue] - Verificando...",
+                        completed=0
+                    )
+
+                    file_key = f"{file_info['id']}_{file_info['name']}"
+                    if file_key in completed_files:
+                        progress.update(status_task, description=f"[green]{file_name[:60]}[/green] - Já baixado", completed=100)
+                        progress.update(global_task, advance=1)
+                        successful += 1
+                        continue
+
+                    if download_view_only_pdf(
+                        service,
+                        file_info['id'],
+                        save_path,
+                        temp_download_dir,
+                        args.scroll_speed,
+                        ocr_enabled=args.ocr,
+                        ocr_lang=args.ocr_lang,
+                        progress_mgr=progress,
+                        task_id=status_task
+                    ):
+                        successful += 1
+                        completed_files.add(file_key)
+                        progress.update(status_task, description=f"[green]{file_name[:60]}[/green] - Completo", completed=100)
+                    else:
+                        failed_files.add(file_key)
+                        progress.update(status_task, description=f"[red]{file_name[:60]}[/red] - Falha", completed=100)
+
+                    progress.update(global_task, advance=1)
+
+                    checkpoint_mgr.save_checkpoint(folder_id, completed_files,
+                                                  failed_files, current_destination_path)
+
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Download de PDFs interrompido[/yellow]")
+
+        finally:
+            # Remove diretório temporário
+            if os.path.exists(temp_download_dir):
+                shutil.rmtree(temp_download_dir)
+
         console.print(f"\n[green]Concluídos: {successful}/{len(pdf_view_only_tasks)}[/green]\n")
     
     # Relatório final

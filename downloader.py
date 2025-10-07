@@ -200,10 +200,24 @@ def export_google_doc(service, file_id: str, save_path: str) -> bool:
 # ============================================================================
 
 @retry_on_failure(max_attempts=3, delay=5)
-def download_view_only_video(creds, file_id: str, file_name: str, save_path: str, 
-                            debug_html: bool = False, hwaccel: Optional[str] = None, 
-                            encoder: Optional[str] = None) -> bool:
-    """Baixa vídeos view-only usando método otimizado."""
+def download_view_only_video(creds, file_id: str, file_name: str, save_path: str,
+                            debug_html: bool = False, hwaccel: Optional[str] = None,
+                            encoder: Optional[str] = None, show_progress: bool = True,
+                            progress_callback=None) -> bool:
+    """
+    Baixa vídeos view-only usando método otimizado.
+
+    Args:
+        creds: Credenciais do Google Drive
+        file_id: ID do arquivo
+        file_name: Nome do arquivo
+        save_path: Caminho para salvar
+        debug_html: Se True, salva HTML para debug
+        hwaccel: Aceleração de hardware (nvidia/intel/amd)
+        encoder: Encoder de vídeo
+        show_progress: Se True, mostra barra tqdm (padrão: True)
+        progress_callback: Função callback(current, total, file_name) para reportar progresso
+    """
     try:
         import requests
         from urllib.parse import unquote
@@ -289,20 +303,35 @@ def download_view_only_video(creds, file_id: str, file_name: str, save_path: str
             total_size = int(response.headers.get('content-length', 0)) + downloaded_size
         
         chunk_size = 5 * 1024 * 1024  # 5MB
-        
+
         with open(save_path, file_mode) as file:
-            with tqdm(
-                total=total_size,
-                initial=downloaded_size,
-                unit='B',
-                unit_scale=True,
-                desc=f" {file_name}",
-                leave=False
-            ) as pbar:
+            if show_progress:
+                # Barra de progresso individual (para download único)
+                with tqdm(
+                    total=total_size,
+                    initial=downloaded_size,
+                    unit='B',
+                    unit_scale=True,
+                    desc=f" {file_name}",
+                    leave=False
+                ) as pbar:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            file.write(chunk)
+                            pbar.update(len(chunk))
+                            downloaded_size += len(chunk)
+                            # Callback para progresso (se fornecido)
+                            if progress_callback:
+                                progress_callback(downloaded_size, total_size, file_name)
+            else:
+                # Download silencioso com callback de progresso (para múltiplos workers)
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         file.write(chunk)
-                        pbar.update(len(chunk))
+                        downloaded_size += len(chunk)
+                        # Callback para progresso (se fornecido)
+                        if progress_callback:
+                            progress_callback(downloaded_size, total_size, file_name)
         
         if os.path.exists(save_path):
             file_size = os.path.getsize(save_path)
@@ -324,36 +353,40 @@ def download_view_only_video(creds, file_id: str, file_name: str, save_path: str
 # DOWNLOAD DE PDFs VIEW-ONLY COM PLAYWRIGHT (MÉTODO PRINCIPAL)
 # ============================================================================
 
-async def download_view_only_pdf_playwright(service, file_id: str, save_path: str, 
+async def download_view_only_pdf_playwright(service, file_id: str, save_path: str,
                                            temp_download_dir: str, scroll_speed: int = 50,
-                                           ocr_enabled: bool = False,        # ===== ADICIONAR =====
-                                           ocr_lang: str = "por+eng") -> bool:  # ===== ADICIONAR =====
+                                           ocr_enabled: bool = False,
+                                           ocr_lang: str = "por+eng",
+                                           progress_mgr=None,
+                                           task_id=None) -> bool:
     """
     Download de PDFs view-only usando Playwright com técnicas modernas de 2025.
     Método principal: canvas-based blob extraction com stealth avançado.
-    
+
     Args:
-        ocr_enabled: Se True, aplica OCR no PDF final          # ===== ADICIONAR =====
-        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
-    
+        ocr_enabled: Se True, aplica OCR no PDF final
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
+        progress_mgr: Rich Progress manager (opcional)
+        task_id: ID da task no Progress (opcional)
+
     **CORRIGIDO: Gerenciamento adequado de browser e tratamento de KeyboardInterrupt**
     """
     if not PLAYWRIGHT_AVAILABLE:
         logging.error("Playwright não disponível. Instale com: pip install playwright playwright-stealth")
         return False
-    
+
     file_name = os.path.basename(save_path)
     browser = None
+
+    # Helper para atualizar progresso
+    def update_progress(description: str, percent: int = 0):
+        if progress_mgr and task_id is not None:
+            progress_mgr.update(task_id, description=description, completed=percent)
 
     try:
         logging.info(f"🚀 Iniciando download Playwright: {file_name}")
 
-        # ===== ADICIONAR: MENSAGEM SOBRE OCR =====
-        if ocr_enabled:
-            ui.ocr_active(ocr_lang, indent=1)
-        # ===== FIM DA ADIÇÃO =====
-
-        ui.file_action(f"Processando: {file_name[:60]}...", indent=1)
+        update_progress(f"[blue]{file_name[:60]}[/blue] - Carregando...", 5)
 
         # Obter URL do arquivo
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
@@ -363,45 +396,46 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
 
         async with async_playwright() as p:
             try:
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Abrindo navegador...", 10)
                 browser = await _launch_stealth_browser(p)
                 page = await _create_stealth_page(browser)
 
                 # Navegar para o PDF
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Navegando...", 15)
                 await page.goto(view_url, wait_until='networkidle', timeout=60000)
-                ui.waiting(8, indent=2)
                 await asyncio.sleep(8)
 
                 # Detectar número total de páginas
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Detectando páginas...", 20)
                 total_pages = await _detect_total_pages(page)
                 if total_pages == 0:
                     raise Exception("Não foi possível detectar páginas do documento")
 
-                ui.document_pages(total_pages, indent=2)
-
                 # Forçar carregamento completo via scroll inteligente
-                await _intelligent_scroll_load(page, total_pages, scroll_speed)
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando scroll ({total_pages}p)...", 25)
+                await _intelligent_scroll_load(page, total_pages, scroll_speed, progress_mgr, task_id, file_name)
 
                 # Aplicar zoom para melhor qualidade
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando zoom...", 70)
                 await page.evaluate("document.body.style.zoom = '2.0';")
                 await asyncio.sleep(2)
 
-                # ===== MODIFICAR: PASSAR PARÂMETROS OCR =====
                 # Extrair blobs via canvas
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Extraindo imagens...", 75)
                 pdf_data, actual_pages = await _extract_blobs_to_pdf(
-                    page, file_name, ocr_enabled, ocr_lang  # ===== ADICIONAR =====
+                    page, file_name, ocr_enabled, ocr_lang,
+                    progress_mgr, task_id
                 )
-                # ===== FIM DA MODIFICAÇÃO =====
 
                 # Salvar PDF
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Salvando PDF...", 95)
                 with open(save_path, 'wb') as f:
                     f.write(pdf_data)
 
                 file_size = os.path.getsize(save_path)
 
-                # ===== ADICIONAR: MENSAGEM COM STATUS OCR =====
-                ui.file_complete(file_size / 1024 / 1024, actual_pages, ocr_enabled, indent=2)
+                update_progress(f"[green]{file_name[:60]}[/green] - Completo ({actual_pages}p, {file_size/1024/1024:.1f}MB)", 100)
                 logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {'com OCR' if ocr_enabled else 'sem OCR'})")
-                # ===== FIM DA ADIÇÃO =====
 
                 return True
 
@@ -598,22 +632,34 @@ async def _detect_total_pages(page: Page) -> int:
     return 0
 
 
-async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed: int = 50):
+async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed: int = 50,
+                                   progress_mgr=None, task_id=None, file_name: str = ""):
     """Scroll com PyAutoGUI (controle real do mouse do sistema operacional).
-    
+
     Args:
         page: Página do Playwright
         expected_pages: Número esperado de páginas
         scroll_speed: Velocidade do scroll (padrão: 50, recomendado: 30-70)
+        progress_mgr: Rich Progress manager (opcional)
+        task_id: ID da task no Progress (opcional)
+        file_name: Nome do arquivo (para progresso)
     """
-    
+
+    # Helper para atualizar progresso
+    def update_progress(description: str, percent: int = 25):
+        if progress_mgr and task_id is not None:
+            progress_mgr.update(task_id, description=description, completed=percent)
+
     if not PYAUTOGUI_AVAILABLE:
         ui.warning("PyAutoGUI não disponível - instale: pip install pyautogui", indent=2)
         return
 
-    ui.info("Scroll PyAutoGUI (otimizado)", emoji="🖱️", indent=2)
-    ui.scroll_warning(indent=2)
-    ui.dim("Preparando...", indent=2)
+    # Mantém avisos importantes
+    if not progress_mgr:
+        ui.info("Scroll PyAutoGUI (otimizado)", emoji="🖱️", indent=2)
+        ui.scroll_warning(indent=2)
+
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Preparando scroll...", 30)
     await asyncio.sleep(1)
 
     # Traz foco para a janela
@@ -624,7 +670,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
     except Exception as e:
         logging.debug(f"Erro ao dar foco: {e}")
 
-    ui.info("Iniciando scroll (você verá o mouse se mexendo)...", emoji="🔄", indent=2)
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Scrolling (não mova o mouse)...", 35)
 
     loaded = 0
     last = 0
@@ -634,20 +680,20 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
     at_bottom_count = 0
     iteration = 0
 
-    ui.special(f"Modo: Velocidade máxima ({scroll_speed} cliques/scroll)", emoji="🚀", indent=2)
-    
     while True:  # Scroll infinito
         pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
         iteration += 1
-        
+
         # Verifica a cada 10 (era 15 = +50% frequência)
         if iteration % 10 == 0:
             try:
                 loaded = await page.evaluate("() => document.querySelectorAll('img[src^=\"blob:\"]').length")
-                
-                # Progresso a cada 50
+
+                # Progresso a cada 50 - atualiza barra
                 if iteration % 50 == 0:
-                    ui.info(f"{loaded} páginas (scroll {iteration})...", emoji="📄", indent=2)
+                    # Calcula progresso: 35% a 65% baseado nas páginas carregadas
+                    progress_percent = min(35 + int((loaded / max(expected_pages, 1)) * 30), 65)
+                    update_progress(f"[blue]{file_name[:60]}[/blue] - Scrolling ({loaded}p, iter {iteration})...", progress_percent)
 
                 # Verifica fim do documento
                 at_bottom = await page.evaluate("""() => {
@@ -664,7 +710,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
                         at_bottom_count = 0
 
                     if stable_count >= 3 and at_bottom_count >= 2 and iteration > 80:
-                        ui.success(f"Fim: {loaded} páginas (iter {iteration})", indent=2)
+                        update_progress(f"[blue]{file_name[:60]}[/blue] - Scroll completo ({loaded}p)", 65)
                         break
                 else:
                     stable_count = 0
@@ -674,20 +720,19 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
 
                 # Limite segurança
                 if iteration >= 5000:
-                    ui.warning(f"Limite (5000): {loaded} páginas", indent=2)
+                    logging.warning(f"Limite de iterações atingido: {loaded} páginas")
                     break
             except:
                 pass
-    
-    ui.waiting(2, indent=2)
+
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Aguardando estabilização...", 66)
     await asyncio.sleep(2)
 
-    ui.info("Voltando ao topo...", emoji="⬆️", indent=2)
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Re-scrolling...", 67)
     pyautogui.press('home')
     await asyncio.sleep(1)
 
     # Re-scroll ULTRA RÁPIDO
-    ui.info("Re-scroll...", emoji="🔄", indent=2)
     for i in range(80):  # 80 scrolls (era 100)
         pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
 
@@ -704,39 +749,48 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
             });
             return unique.size;
         }""")
-        ui.success(f"TOTAL FINAL: {final} páginas renderizadas", indent=2)
+        update_progress(f"[blue]{file_name[:60]}[/blue] - {final} páginas carregadas", 68)
     except Exception as e:
-        ui.info(f"Última contagem: {loaded} páginas", emoji="ℹ️", indent=2)
+        logging.debug(f"Erro ao contar páginas finais: {e}")
 
 
 async def _extract_blobs_to_pdf(page: Page, file_name: str,
-                                ocr_enabled: bool = False,        # ===== ADICIONAR =====
-                                ocr_lang: str = "por+eng") -> tuple[bytes, int]:  # ===== ADICIONAR =====
+                                ocr_enabled: bool = False,
+                                ocr_lang: str = "por+eng",
+                                progress_mgr=None,
+                                task_id=None) -> tuple[bytes, int]:
     """
     Extrai blobs via canvas e converte para PDF com OCR opcional.
-    
+
     Args:
         page: Página do Playwright
         file_name: Nome do arquivo (para log)
-        ocr_enabled: Se True, aplica OCR no PDF              # ===== ADICIONAR =====
-        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
-    
+        ocr_enabled: Se True, aplica OCR no PDF
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
+        progress_mgr: Rich Progress manager (opcional)
+        task_id: ID da task no Progress (opcional)
+
     Returns:
         tuple[bytes, int]: (PDF bytes, número de páginas)
     """
-    ui.processing("Extraindo imagens das páginas...", emoji="🎨", indent=2)
+    # Helper para atualizar progresso
+    def update_progress(description: str, percent: int = 75):
+        if progress_mgr and task_id is not None:
+            progress_mgr.update(task_id, description=description, completed=percent)
 
     from PIL import Image
     import base64
     from io import BytesIO
-    
+
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Extraindo imagens...", 75)
+
     # Extrai blobs como data URLs via canvas
     data_urls = await page.evaluate("""async () => {
         const imgs = Array.from(document.getElementsByTagName('img'));
-        const blobs = imgs.filter(img => 
+        const blobs = imgs.filter(img =>
             img.src && img.src.startsWith('blob:') && img.naturalHeight > 100
         );
-        
+
         // Remove duplicatas e ordena
         const unique = new Map();
         blobs.forEach(img => {
@@ -745,14 +799,14 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 unique.set(img.src, window.scrollY + rect.top);
             }
         });
-        
+
         const sorted = Array.from(unique.entries()).sort((a, b) => a[1] - b[1]);
-        
+
         // Converte cada blob para data URL via canvas
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         const results = [];
-        
+
         for (let [src, _] of sorted) {
             const img = blobs.find(i => i.src === src);
             if (img) {
@@ -762,14 +816,14 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 results.push(canvas.toDataURL('image/png'));
             }
         }
-        
+
         return results;
     }""")
-    
+
     if not data_urls or len(data_urls) == 0:
         raise Exception('Nenhuma página encontrada para extrair')
 
-    ui.file_action(f"Convertendo {len(data_urls)} páginas para PDF...", indent=2)
+    update_progress(f"[blue]{file_name[:60]}[/blue] - Convertendo {len(data_urls)}p para PDF...", 78)
 
     # Converte data URLs para PIL Images (otimizado)
     pil_images = []
@@ -787,20 +841,21 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
 
             pil_images.append(pil_img)
 
-            # Progresso a cada 5 páginas
-            if (idx + 1) % 5 == 0 or (idx + 1) == len(data_urls):
-                ui.progress_update(idx + 1, len(data_urls), label="páginas", indent=3)
+            # Progresso a cada 10 páginas
+            if (idx + 1) % 10 == 0 or (idx + 1) == len(data_urls):
+                # 78% a 85% baseado no progresso
+                progress_percent = 78 + int(((idx + 1) / len(data_urls)) * 7)
+                update_progress(f"[blue]{file_name[:60]}[/blue] - Convertendo ({idx + 1}/{len(data_urls)}p)...", progress_percent)
         except Exception as e:
             logging.warning(f"Erro página {idx + 1}: {e}")
-    
+
     if not pil_images:
         raise Exception('Falha ao converter imagens')
-    
-    # ===== ADICIONAR: LÓGICA DE OCR =====
+
     pdf_buf = BytesIO()
 
     if ocr_enabled:
-        ui.processing(f"Aplicando OCR ({ocr_lang})...", emoji="🔍", indent=2)
+        update_progress(f"[blue]{file_name[:60]}[/blue] - Aplicando OCR ({ocr_lang})...", 86)
         try:
             pdf_bytes = _create_pdf_with_ocr(pil_images, ocr_lang)
             pdf_buf.write(pdf_bytes)
@@ -833,9 +888,8 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 quality=95          # ✅ ADICIONADO
             )
 
-    status = "com OCR" if ocr_enabled else "sem OCR"
-    ui.success(f"PDF criado {status} ({len(pil_images)} páginas)", indent=2)
-    
+    update_progress(f"[blue]{file_name[:60]}[/blue] - PDF criado ({len(pil_images)}p)", 90)
+
     return (pdf_buf.getvalue(), len(pil_images))
 
 # ============================================================================
@@ -1296,35 +1350,38 @@ def run_async_with_cleanup(coro):
 # FUNÇÃO PRINCIPAL DE INTERFACE
 # ============================================================================
 
-def download_view_only_pdf(service, file_id: str, save_path: str, 
+def download_view_only_pdf(service, file_id: str, save_path: str,
                           temp_download_dir: str, scroll_speed: int = 50,
-                          ocr_enabled: bool = False,        # ===== ADICIONAR =====
-                          ocr_lang: str = "por+eng") -> bool:  # ===== ADICIONAR =====
+                          ocr_enabled: bool = False,
+                          ocr_lang: str = "por+eng",
+                          progress_mgr=None,
+                          task_id=None) -> bool:
     """
     Função principal para download de PDFs view-only.
     Usa automaticamente o melhor método disponível (Playwright > Selenium).
-    
+
     Args:
         service: Serviço autenticado do Google Drive
         file_id: ID do arquivo no Google Drive
         save_path: Caminho onde salvar o PDF
         temp_download_dir: Diretório temporário
         scroll_speed: Velocidade do scroll (30-70)
-        ocr_enabled: Se True, aplica OCR no PDF final          # ===== ADICIONAR =====
-        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')  # ===== ADICIONAR =====
-    
+        ocr_enabled: Se True, aplica OCR no PDF final
+        ocr_lang: Idiomas para OCR (ex: 'por', 'eng', 'por+eng')
+        progress_mgr: Rich Progress manager (opcional)
+        task_id: ID da task no Progress (opcional)
+
     **CORRIGIDO: Event loop simplificado para permitir cancelamento instantâneo**
     """
     if PLAYWRIGHT_AVAILABLE:
         try:
-            # ===== MODIFICAR: USAR WRAPPER SEGURO COM CLEANUP =====
             return run_async_with_cleanup(
                 download_view_only_pdf_playwright(
                     service, file_id, save_path, temp_download_dir,
-                    scroll_speed, ocr_enabled, ocr_lang
+                    scroll_speed, ocr_enabled, ocr_lang,
+                    progress_mgr, task_id
                 )
             )
-            # ===== FIM DA MODIFICAÇÃO =====
 
         except KeyboardInterrupt:
             logging.info("Download interrompido pelo usuário (Ctrl+C)")
@@ -1333,11 +1390,11 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
         except asyncio.CancelledError:
             logging.info("Task assíncrona cancelada")
             return False
-        
+
         except Exception as e:
             logging.error(f"Erro no download PDF playwright: {e}")
             return False
-        
+
     elif SELENIUM_AVAILABLE:
         logging.warning("Playwright não disponível, usando fallback Selenium (menos eficiente)")
         return download_view_only_pdf_selenium(service, file_id, save_path, temp_download_dir)
