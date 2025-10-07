@@ -24,6 +24,7 @@ Thumbs.db
 # Ignore credential files
 credentials.json
 token.json
+TO-DO.txt
 
 # Ignore checkpoints, Python cache, and temporary folders
 .checkpoints/
