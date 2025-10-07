@@ -28,7 +28,15 @@
     "clear_checkpoint": "Remove checkpoint e recomeça",
     "debug_html": "Salva HTML para debug",
     "no_legal_warning": "Suprime aviso legal (use com responsabilidade)",
-    "language": "Idioma da interface (en/pt). Padrão: en"
+    "language": "Idioma da interface (en/pt). Padrão: en",
+    "log_level": "Nível de log para arquivo (padrão: INFO). Logs vão só para arquivo a menos que use -v",
+    "verbose": "Mostra logs no console (-v: INFO, -vv: DEBUG, -vvv: DEBUG completo)",
+    "quiet": "Força sem console (só arquivo, mesmo com -v)",
+    "log_file": "Caminho customizado do arquivo de log (padrão: download.log)",
+    "no_log_file": "Desabilita logging em arquivo completamente",
+    "log_append": "Adiciona ao log existente em vez de sobrescrever",
+    "log_rotate": "Ativa rotação automática de logs (10MB, mantém 5)",
+    "no_color": "Desabilita cores no console"
   },
 
   "help": {

@@ -235,20 +235,7 @@ def show_legal_warning():
     console.print()
 
 
-def setup_logging(log_file: str = 'download.log'):
-    """Configura sistema de logging."""
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        filemode='w',  # ✅ CORRIGIDO: Reseta log a cada execução (era 'a')
-        encoding='utf-8'
-    )
-    
-    # Também loga para console em modo warning
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.WARNING)
-    logging.getLogger().addHandler(console_handler)
+# NOTE: setup_logging() moved to logger.py module (advanced logging system)
 
 
 # ============================================================================
@@ -555,6 +542,63 @@ def parse_arguments():
     parser.add_argument("--no-legal-warning", action="store_true",
                        help=t('args.no_legal_warning'))
 
+    # =========================================================================
+    # LOGGING OPTIONS
+    # =========================================================================
+    log_group = parser.add_argument_group('logging options')
+
+    log_group.add_argument(
+        '--log-level',
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        default='INFO',
+        help=t('args.log_level')
+    )
+
+    log_group.add_argument(
+        '-v', '--verbose',
+        action='count',
+        default=0,
+        help=t('args.verbose')
+    )
+
+    log_group.add_argument(
+        '-q', '--quiet',
+        action='store_true',
+        help=t('args.quiet')
+    )
+
+    log_group.add_argument(
+        '--log-file',
+        type=str,
+        default='download.log',
+        help=t('args.log_file')
+    )
+
+    log_group.add_argument(
+        '--no-log-file',
+        action='store_true',
+        help=t('args.no_log_file')
+    )
+
+    log_group.add_argument(
+        '--log-append',
+        action='store_true',
+        help=t('args.log_append')
+    )
+
+    log_group.add_argument(
+        '--log-rotate',
+        action='store_true',
+        help=t('args.log_rotate')
+    )
+
+    log_group.add_argument(
+        '--no-color',
+        action='store_true',
+        help=t('args.no_color')
+    )
+
     # Language (already parsed, but include for help display)
     parser.add_argument("--language", "--lang", type=str, default=pre_args.language,
                        choices=['en', 'pt'],
@@ -633,18 +677,60 @@ def main():
     """Função principal do programa."""
     global checkpoint_mgr, current_folder_id
     global current_completed_files, current_failed_files, current_destination_path
-    
+
     # Configura handler de interrupção
     signal.signal(signal.SIGINT, signal_handler)
-    
-    # Setup logging
-    setup_logging()
-    
-    # Parse argumentos
+
+    # Parse argumentos PRIMEIRO (para obter configurações de logging)
     try:
         args = parse_arguments()
     except SystemExit:
         return
+
+    # =========================================================================
+    # SETUP ADVANCED LOGGING SYSTEM
+    # =========================================================================
+    from logger import setup_logging as setup_advanced_logging
+    from config import LOG_ROTATE_SIZE, LOG_ROTATE_COUNT
+
+    # Determine log level and console behavior from flags
+    if args.verbose >= 3:
+        # -vvv: DEBUG mode with third-party logs, show in console
+        log_level = 'DEBUG'
+        filter_third_party = False
+        show_console = True
+    elif args.verbose == 2:
+        # -vv: DEBUG mode, filter third-party, show in console
+        log_level = 'DEBUG'
+        filter_third_party = True
+        show_console = True
+    elif args.verbose == 1:
+        # -v: INFO mode, show in console
+        log_level = 'INFO'
+        filter_third_party = True
+        show_console = True
+    else:
+        # Default: use --log-level, NO console output (file only)
+        log_level = args.log_level
+        filter_third_party = True
+        show_console = False
+
+    # --quiet flag forces no console output
+    if args.quiet:
+        show_console = False
+
+    # Setup logging with all options
+    setup_advanced_logging(
+        level=log_level,
+        log_file=None if args.no_log_file else args.log_file,
+        append=args.log_append,
+        rotate=args.log_rotate,
+        rotate_size=LOG_ROTATE_SIZE,
+        rotate_count=LOG_ROTATE_COUNT,
+        quiet=not show_console,  # quiet=True means no console output
+        colored=not args.no_color,
+        filter_third_party=filter_third_party
+    )
     
     # Banner inicial
     console.print(Panel.fit(
