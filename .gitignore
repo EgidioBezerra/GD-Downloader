@@ -28,6 +28,7 @@ TO-DO.txt
 
 # Ignore checkpoints, Python cache, and temporary folders
 .checkpoints/
+.claude/
 __pycache__/
 temp_pdf_downloads/
 Downloads/

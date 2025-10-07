@@ -1136,14 +1136,8 @@ def main():
                 TimeRemainingColumn(),
                 console=console
             ) as progress:
-                # Task de progresso global
-                global_task = progress.add_task(
-                    f"[bold blue]Total:[/bold blue]",
-                    total=len(pdf_view_only_tasks)
-                )
-
-                # Task de status atual
-                status_task = progress.add_task(
+                # ✅ Task única com informação completa
+                pdf_task = progress.add_task(
                     "[dim]Aguardando...[/dim]",
                     total=100
                 )
@@ -1157,17 +1151,16 @@ def main():
                     save_path = task['save_path']
                     file_name = file_info['name']
 
-                    # Atualiza status
+                    # Atualiza status com contador de PDFs
                     progress.update(
-                        status_task,
-                        description=f"[blue]{file_name[:60]}[/blue] - Verificando...",
+                        pdf_task,
+                        description=f"[blue]PDF {idx}/{len(pdf_view_only_tasks)}:[/blue] {file_name[:45]} - Verificando...",
                         completed=0
                     )
 
                     file_key = f"{file_info['id']}_{file_info['name']}"
                     if file_key in completed_files:
-                        progress.update(status_task, description=f"[green]{file_name[:60]}[/green] - Já baixado", completed=100)
-                        progress.update(global_task, advance=1)
+                        progress.update(pdf_task, description=f"[green]PDF {idx}/{len(pdf_view_only_tasks)}:[/green] {file_name[:45]} - Já baixado", completed=100)
                         successful += 1
                         continue
 
@@ -1180,16 +1173,16 @@ def main():
                         ocr_enabled=args.ocr,
                         ocr_lang=args.ocr_lang,
                         progress_mgr=progress,
-                        task_id=status_task
+                        task_id=pdf_task,
+                        pdf_number=idx,
+                        total_pdfs=len(pdf_view_only_tasks)
                     ):
                         successful += 1
                         completed_files.add(file_key)
-                        progress.update(status_task, description=f"[green]{file_name[:60]}[/green] - Completo", completed=100)
+                        progress.update(pdf_task, description=f"[green]PDF {idx}/{len(pdf_view_only_tasks)}:[/green] {file_name[:45]} - Completo", completed=100)
                     else:
                         failed_files.add(file_key)
-                        progress.update(status_task, description=f"[red]{file_name[:60]}[/red] - Falha", completed=100)
-
-                    progress.update(global_task, advance=1)
+                        progress.update(pdf_task, description=f"[red]PDF {idx}/{len(pdf_view_only_tasks)}:[/red] {file_name[:45]} - Falha", completed=100)
 
                     checkpoint_mgr.save_checkpoint(folder_id, completed_files,
                                                   failed_files, current_destination_path)
