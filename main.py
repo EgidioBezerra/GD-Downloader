@@ -167,10 +167,18 @@ def ensure_path_length_valid(path: Path, max_length: int = 240) -> Path:
 # ============================================================================
 
 def signal_handler(sig, frame):
-    """Manipula Ctrl+C para salvar estado de forma segura."""
+    """
+    Manipula Ctrl+C para salvar estado de forma segura.
+
+    ✅ CORRIGIDO: Levanta KeyboardInterrupt em vez de sys.exit()
+    para permitir que loops detectem a interrupção.
+    """
     global interrupted, checkpoint_mgr, current_folder_id
     global current_completed_files, current_failed_files, current_destination_path
-    
+
+    # Define flag IMEDIATAMENTE
+    interrupted = True
+
     console.print("\n")
     console.print(Panel.fit(
         "[bold yellow]Interrupção detectada![/bold yellow]\n"
@@ -178,26 +186,25 @@ def signal_handler(sig, frame):
         border_style="yellow",
         title="Download Pausado"
     ))
-    
+
     if checkpoint_mgr and current_folder_id and current_completed_files is not None:
         success = checkpoint_mgr.save_checkpoint(
-            current_folder_id, 
-            current_completed_files, 
+            current_folder_id,
+            current_completed_files,
             current_failed_files,
             current_destination_path
         )
-        
+
         if success:
             console.print("\n[green]Checkpoint salvo com sucesso![/green]")
             console.print("\n[cyan]Para retomar, execute:[/cyan]")
             console.print("[bold]python main.py <URL> <DESTINO> --resume[/bold]\n")
         else:
             console.print("\n[red]Erro ao salvar checkpoint[/red]")
-    
-    interrupted = True
-    
-    # Sai imediatamente - o cleanup será feito pelos context managers e finally blocks
-    sys.exit(0)
+
+    # ✅ CORRIGIDO: Levanta KeyboardInterrupt em vez de sys.exit(0)
+    # Isso permite que os loops capturem e façam cleanup apropriado
+    raise KeyboardInterrupt
 
 
 
@@ -230,7 +237,7 @@ def setup_logging(log_file: str = 'download.log'):
         filename=log_file,
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
-        filemode='a',
+        filemode='w',  # ✅ CORRIGIDO: Reseta log a cada execução (era 'a')
         encoding='utf-8'
     )
     
@@ -332,35 +339,69 @@ def traverse_and_prepare_download_batch(service, folder_id: str, local_path: Pat
 # WORKERS
 # ============================================================================
 
-def download_worker(task, creds, completed_files: Set[str], failed_files: Set[str]) -> bool:
-    """Worker para downloads padrão."""
+def download_worker(task, creds, completed_files: Set[str], failed_files: Set[str],
+                   progress_mgr=None, task_id=None) -> bool:
+    """
+    Worker para downloads padrão com suporte a progresso individual.
+
+    Args:
+        task: Tarefa de download
+        creds: Credenciais do Google Drive
+        completed_files: Set de arquivos completados
+        failed_files: Set de arquivos que falharam
+        progress_mgr: Gerenciador de progresso Rich (opcional)
+        task_id: ID da task Rich para atualizar progresso (opcional)
+    """
     try:
         service = build('drive', 'v3', credentials=creds)
         file_info = task['file_info']
         save_path = task['save_path']
         mime_type = file_info.get('mimeType', '')
-        
+
         file_key = f"{file_info['id']}_{file_info['name']}"
-        
+
         if file_key in completed_files:
             return True
 
+        # Callback para atualizar progresso na interface
+        def progress_callback(current, total, file_name):
+            if progress_mgr and task_id is not None:
+                percent = int((current / total) * 100) if total > 0 else 0
+                progress_mgr.update(
+                    task_id,
+                    description=f"[cyan]{file_name[:50]}[/cyan]",
+                    completed=percent
+                )
+
         success = False
         if 'google-apps' in mime_type:
+            # Google Docs não suportam callback de progresso
+            if progress_mgr and task_id is not None:
+                progress_mgr.update(task_id, description=f"[cyan]{file_info['name'][:50]}[/cyan]")
             success = export_google_doc(service, file_info['id'], save_path)
         else:
-            success = download_standard_file(service, file_info['id'], save_path)
-        
+            success = download_standard_file(
+                service, file_info['id'], save_path,
+                show_progress=False,
+                progress_callback=progress_callback
+            )
+
         if success:
             completed_files.add(file_key)
+            if progress_mgr and task_id is not None:
+                progress_mgr.update(task_id, description="[green]✓ Aguardando...[/green]", completed=0)
         else:
             failed_files.add(file_key)
-        
+            if progress_mgr and task_id is not None:
+                progress_mgr.update(task_id, description="[red]✗ Erro[/red]", completed=0)
+
         return success
-            
+
     except Exception as e:
         logging.error(f"Erro no worker: {e}")
         failed_files.add(f"{task['file_info']['id']}_{task['file_info']['name']}")
+        if progress_mgr and task_id is not None:
+            progress_mgr.update(task_id, description="[red]✗ Erro[/red]", completed=0)
         return False
 
 
@@ -550,7 +591,7 @@ def main():
     console.print(Panel.fit(
         "[bold cyan]Google Drive Downloader[/bold cyan]\n"
         "[dim]Download inteligente com pause/resume[/dim]\n"
-        "[dim]Versão 2.0 - Windows Otimizado[/dim]",
+        "[dim]Versão 2.5 - Interface Unificada[/dim]",
         border_style="cyan",
         title="Iniciando"
     ))
@@ -778,7 +819,7 @@ def main():
     if not only_view_only and parallel_tasks:
         console.print(f"\n[bold cyan]Iniciando Downloads Padrão[/bold cyan]")
         console.print(f"Workers: {workers} | Arquivos: {len(parallel_tasks)}\n")
-        
+
         try:
             with Progress(
                 SpinnerColumn(),
@@ -788,30 +829,128 @@ def main():
                 TimeRemainingColumn(),
                 console=console
             ) as progress:
-                task_id = progress.add_task("[cyan]Baixando...", total=len(parallel_tasks))
-                
+                # ✅ Cria pool de tasks Rich (uma para cada worker)
+                worker_tasks = []
+                for i in range(workers):
+                    tid = progress.add_task(f"[dim]Worker {i+1}: Aguardando...[/dim]", total=100)
+                    worker_tasks.append(tid)
+
+                # Task global de contagem
+                global_task = progress.add_task(
+                    f"[bold cyan]Total:[/bold cyan]",
+                    total=len(parallel_tasks)
+                )
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                    task_worker = partial(download_worker, creds=creds, 
-                                        completed_files=completed_files, 
-                                        failed_files=failed_files)
+                    # ✅ Sistema produtor-consumidor
+                    from queue import Queue
+                    import threading
+
+                    # Fila de worker task IDs disponíveis
+                    available_workers = Queue()
+                    for tid in worker_tasks:
+                        available_workers.put(tid)
+
+                    # Fila de tarefas pendentes
+                    pending_tasks = Queue()
+                    for task in parallel_tasks:
+                        pending_tasks.put(task)
+
+                    futures = {}
                     results = []
-                    
-                    for result in executor.map(task_worker, parallel_tasks):
-                        results.append(result)
-                        progress.update(task_id, advance=1)
-                        
-                        # Salva checkpoint a cada 10 arquivos
-                        if len(results) % 10 == 0:
-                            checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
-                                                          failed_files, current_destination_path)
-                
+
+                    # Lock para controle de submissões
+                    submit_lock = threading.Lock()
+
+                    def submit_next_task():
+                        """Submete próxima tarefa se houver worker disponível."""
+                        if pending_tasks.empty():
+                            return False
+
+                        try:
+                            # Tenta pegar worker e task sem bloquear
+                            tid = available_workers.get(timeout=0.1)
+                            task = pending_tasks.get(timeout=0.1)
+
+                            # Submete
+                            future = executor.submit(
+                                download_worker,
+                                task, creds, completed_files, failed_files,
+                                progress, tid
+                            )
+
+                            with submit_lock:
+                                futures[future] = (task, tid)
+
+                            return True
+
+                        except:
+                            return False
+
+                    # Submete tarefas iniciais (até workers)
+                    for _ in range(min(workers, len(parallel_tasks))):
+                        submit_next_task()
+
+                    try:
+                        # ✅ Loop com timeout para permitir verificação de interrupted
+                        while len(results) < len(parallel_tasks):
+                            # Verifica flag de interrupção
+                            if interrupted:
+                                raise KeyboardInterrupt
+
+                            # Aguarda com timeout de 0.5s
+                            done, pending_futures = concurrent.futures.wait(
+                                futures.keys(),
+                                timeout=0.5,
+                                return_when=concurrent.futures.FIRST_COMPLETED
+                            )
+
+                            # Processa futures concluídos
+                            for future in done:
+                                with submit_lock:
+                                    task, tid = futures.pop(future)
+
+                                try:
+                                    result = future.result()
+                                    results.append(result)
+                                    progress.update(global_task, advance=1)
+
+                                    # Libera worker task_id
+                                    available_workers.put(tid)
+
+                                    # Submete próxima tarefa
+                                    submit_next_task()
+
+                                    # Salva checkpoint a cada 10 arquivos
+                                    if len(results) % 10 == 0:
+                                        checkpoint_mgr.save_checkpoint(
+                                            folder_id, completed_files,
+                                            failed_files, current_destination_path
+                                        )
+
+                                except Exception as e:
+                                    logging.error(f"Erro ao processar resultado: {e}")
+                                    results.append(False)
+                                    # Libera worker e submete próxima
+                                    available_workers.put(tid)
+                                    submit_next_task()
+
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow]Cancelando downloads pendentes...[/yellow]")
+                        # Cancela futures pendentes
+                        for future in futures:
+                            future.cancel()
+                        # Aguarda cleanup
+                        concurrent.futures.wait(futures.keys(), timeout=5)
+                        raise
+
                 # Salva checkpoint final
-                checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
+                checkpoint_mgr.save_checkpoint(folder_id, completed_files,
                                               failed_files, current_destination_path)
-            
+
         except KeyboardInterrupt:
             return
-        
+
         successful = sum(1 for r in results if r)
         console.print(f"[green]Concluídos: {successful}/{len(parallel_tasks)}[/green]\n")
     
@@ -819,10 +958,10 @@ def main():
     if video_view_only_tasks:
         console.print(f"\n[bold magenta]Iniciando Vídeos View-Only[/bold magenta]")
         console.print(f"Workers: {min(workers, len(video_view_only_tasks))} | Vídeos: {len(video_view_only_tasks)}\n")
-        
+
         video_workers = min(workers, len(video_view_only_tasks))
         gpu_flags = {'debug_html': args.debug_html}
-        
+
         try:
             with Progress(
                 SpinnerColumn(),
@@ -833,29 +972,47 @@ def main():
                 console=console
             ) as progress:
                 task_id = progress.add_task("[magenta]Baixando vídeos...", total=len(video_view_only_tasks))
-                
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=video_workers) as executor:
                     task_worker = partial(video_worker, creds=creds, gpu_flags=gpu_flags,
-                                        completed_files=completed_files, 
+                                        completed_files=completed_files,
                                         failed_files=failed_files)
+
+                    futures = {executor.submit(task_worker, task): task for task in video_view_only_tasks}
                     results = []
-                    
-                    for result in executor.map(task_worker, video_view_only_tasks):
-                        results.append(result)
-                        progress.update(task_id, advance=1)
-                        
-                        # Salva checkpoint a cada 5 vídeos
-                        if len(results) % 5 == 0:
-                            checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
-                                                          failed_files, current_destination_path)
-                
+
+                    try:
+                        # Processa conforme completam (permite CTRL-C)
+                        for future in concurrent.futures.as_completed(futures):
+                            try:
+                                result = future.result()
+                                results.append(result)
+                                progress.update(task_id, advance=1)
+
+                                # Salva checkpoint a cada 5 vídeos
+                                if len(results) % 5 == 0:
+                                    checkpoint_mgr.save_checkpoint(folder_id, completed_files,
+                                                                  failed_files, current_destination_path)
+                            except Exception as e:
+                                logging.error(f"Erro ao processar resultado de vídeo: {e}")
+                                results.append(False)
+
+                    except KeyboardInterrupt:
+                        console.print("\n[yellow]Interrupção detectada! Cancelando downloads de vídeos pendentes...[/yellow]")
+                        # Cancela futures pendentes
+                        for future in futures:
+                            future.cancel()
+                        # Aguarda cleanup
+                        concurrent.futures.wait(futures, timeout=5)
+                        raise
+
                 # Salva checkpoint final
-                checkpoint_mgr.save_checkpoint(folder_id, completed_files, 
+                checkpoint_mgr.save_checkpoint(folder_id, completed_files,
                                               failed_files, current_destination_path)
-            
+
         except KeyboardInterrupt:
             return
-        
+
         successful = sum(1 for r in results if r)
         console.print(f"[green]Concluídos: {successful}/{len(video_view_only_tasks)}[/green]\n")
     
