@@ -195,7 +195,46 @@ def signal_handler(sig, frame):
             console.print("\n[red]Erro ao salvar checkpoint[/red]")
     
     interrupted = True
+    
+    # ========== CORREÇÃO: Cancela tasks assíncronas pendentes ==========
+    import asyncio
+    try:
+        # Tenta obter o loop em execução
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Se não há loop rodando, tenta get_event_loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+        
+        if loop and not loop.is_closed():
+            # Cancela todas as tasks pendentes
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                console.print(f"[dim]Cancelando {len(pending)} tasks assíncronas...[/dim]")
+                for task in pending:
+                    task.cancel()
+                
+                # Aguarda o cancelamento (com timeout)
+                try:
+                    loop.run_until_complete(
+                        asyncio.wait_for(
+                            asyncio.gather(*pending, return_exceptions=True),
+                            timeout=3.0
+                        )
+                    )
+                except asyncio.TimeoutError:
+                    console.print("[yellow]Timeout ao cancelar tasks[/yellow]")
+                except Exception as e:
+                    logging.debug(f"Erro ao cancelar tasks: {e}")
+    except Exception as e:
+        logging.debug(f"Erro no cleanup assíncrono: {e}")
+    # ===================================================================
+    
     sys.exit(0)
+
 
 
 def show_legal_warning():

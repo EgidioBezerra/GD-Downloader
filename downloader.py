@@ -31,13 +31,16 @@ try:
     try:
         from playwright_stealth import stealth_async
         STEALTH_AVAILABLE = True
+        STEALTH_SYNC = None
     except ImportError:
         STEALTH_AVAILABLE = False
+        STEALTH_SYNC = None
         logging.info("playwright-stealth não disponível - usando stealth nativo")
             
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     STEALTH_AVAILABLE = False
+    STEALTH_SYNC = None
     logging.warning("Playwright não disponível. Instale: pip install playwright")
 
 # Fallback para Selenium (compatibilidade)
@@ -299,12 +302,15 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
     """
     Download de PDFs view-only usando Playwright com técnicas modernas de 2025.
     Método principal: canvas-based blob extraction com stealth avançado.
+    
+    **CORREÇÃO: Adiciona tratamento adequado para cancelamento (Ctrl+C)**
     """
     if not PLAYWRIGHT_AVAILABLE:
         logging.error("Playwright não disponível. Instale com: pip install playwright playwright-stealth")
         return False
     
     file_name = os.path.basename(save_path)
+    browser = None  # ========== IMPORTANTE: Inicializa browser ==========
     
     try:
         logging.info(f"🚀 Iniciando download Playwright: {file_name}")
@@ -354,12 +360,37 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 return True
             
             finally:
+                # ========== CORREÇÃO: Cleanup adequado do browser ==========
+                try:
+                    await browser.close()
+                except Exception as e:
+                    logging.debug(f"Erro ao fechar browser: {e}")
+                # ===========================================================
+    
+    # ========== CORREÇÃO: Tratamento de CancelledError ==========
+    except asyncio.CancelledError:
+        logging.info(f"Download cancelado pelo usuário: {file_name}")
+        print(f"    ⚠️  Cancelado: {file_name}")
+        # Cleanup do browser se necessário
+        if browser:
+            try:
                 await browser.close()
+            except:
+                pass
+        raise  # Re-raise para propagação adequada
+    # ============================================================
     
     except Exception as e:
         logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
         print(f"    ✗ Erro: {type(e).__name__}")
+        # Cleanup do browser em caso de erro
+        if browser:
+            try:
+                await browser.close()
+            except:
+                pass
         return False
+
 
 
 async def _launch_stealth_browser(playwright) -> Browser:
@@ -404,23 +435,15 @@ async def _create_stealth_page(browser: Browser) -> Page:
     
     page = await context.new_page()
     
-    # Aplica stealth se disponível
-    if STEALTH_AVAILABLE == True:
+    # Aplica stealth se disponível (apenas versão async)
+    if STEALTH_AVAILABLE:
         try:
             await stealth_async(page)
             logging.info("Stealth plugin aplicado")
         except Exception as e:
             logging.warning(f"Erro ao aplicar stealth plugin: {e}")
-    elif STEALTH_AVAILABLE == "sync":
-        try:
-            # Versão sync do stealth
-            import asyncio
-            await asyncio.get_event_loop().run_in_executor(None, stealth, page)
-            logging.info("Stealth plugin (sync) aplicado")
-        except Exception as e:
-            logging.warning(f"Erro ao aplicar stealth sync: {e}")
     
-    # Scripts anti-detecção nativos (sempre aplica)
+    # Scripts anti-detecção nativos (sempre aplica - FALLBACK)
     await page.add_init_script("""
         // Remove webdriver flag
         Object.defineProperty(navigator, 'webdriver', {
@@ -451,7 +474,10 @@ async def _create_stealth_page(browser: Browser) -> Page:
         });
     """)
     
-    logging.info("Scripts anti-detecção nativos aplicados")
+    if STEALTH_AVAILABLE:
+        logging.info("Stealth async aplicado com sucesso")
+    else:
+        logging.info("Scripts anti-detecção nativos aplicados (stealth não disponível)")
     
     return page
 
@@ -851,11 +877,47 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
     """
     Função principal para download de PDFs view-only.
     Usa automaticamente o melhor método disponível (Playwright > Selenium).
+    
+    **CORREÇÃO: Executa async de forma que respeite cancelamento**
     """
     if PLAYWRIGHT_AVAILABLE:
-        return asyncio.run(
-            download_view_only_pdf_playwright(service, file_id, save_path, temp_download_dir)
-        )
+        # ========== CORREÇÃO: Tratamento adequado de Ctrl+C ==========
+        try:
+            # Cria novo event loop se necessário
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Executa a coroutine
+            return loop.run_until_complete(
+                download_view_only_pdf_playwright(service, file_id, save_path, temp_download_dir)
+            )
+        
+        except KeyboardInterrupt:
+            logging.info("Download interrompido pelo usuário (Ctrl+C)")
+            return False
+        
+        except asyncio.CancelledError:
+            logging.info("Task assíncrona cancelada")
+            return False
+        
+        finally:
+            # Cleanup de tasks pendentes
+            try:
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+            except Exception as e:
+                logging.debug(f"Erro no cleanup do loop: {e}")
+        # =============================================================
+        
     elif SELENIUM_AVAILABLE:
         logging.warning("Playwright não disponível, usando fallback Selenium (menos eficiente)")
         return download_view_only_pdf_selenium(service, file_id, save_path, temp_download_dir)
