@@ -298,12 +298,12 @@ def download_view_only_video(creds, file_id: str, file_name: str, save_path: str
 # ============================================================================
 
 async def download_view_only_pdf_playwright(service, file_id: str, save_path: str, 
-                                           temp_download_dir: str) -> bool:
+                                           temp_download_dir: str, scroll_speed: int = 50) -> bool:
     """
     Download de PDFs view-only usando Playwright com técnicas modernas de 2025.
     Método principal: canvas-based blob extraction com stealth avançado.
     
-    **CORREÇÃO: Adiciona tratamento adequado para cancelamento (Ctrl+C)**
+    **CORRIGIDO: Gerenciamento adequado de browser e tratamento de KeyboardInterrupt**
     """
     if not PLAYWRIGHT_AVAILABLE:
         logging.error("Playwright não disponível. Instale com: pip install playwright playwright-stealth")
@@ -340,7 +340,7 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 print(f"    📊 Documento tem {total_pages} páginas")
                 
                 # Forçar carregamento completo via scroll inteligente
-                await _intelligent_scroll_load(page, total_pages)
+                await _intelligent_scroll_load(page, total_pages, scroll_speed)
                 
                 # Aplicar zoom para melhor qualidade
                 await page.evaluate("document.body.style.zoom = '2.0';")
@@ -367,18 +367,23 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                     logging.debug(f"Erro ao fechar browser: {e}")
                 # ===========================================================
     
-    # ========== CORREÇÃO: Tratamento de CancelledError ==========
+    # ========== CORRIGIDO: Tratamento adequado de interrupções ==========
+    except (KeyboardInterrupt, SystemExit):
+        # KeyboardInterrupt deve propagar IMEDIATAMENTE sem cleanup
+        logging.info(f"Interrupção detectada durante download: {file_name}")
+        print(f"    ⚠️  Interrompido: {file_name}")
+        raise  # Propaga imediatamente para sys.exit()
+    
     except asyncio.CancelledError:
-        logging.info(f"Download cancelado pelo usuário: {file_name}")
+        logging.info(f"Download cancelado: {file_name}")
         print(f"    ⚠️  Cancelado: {file_name}")
-        # Cleanup do browser se necessário
         if browser:
             try:
                 await browser.close()
             except:
                 pass
-        raise  # Re-raise para propagação adequada
-    # ============================================================
+        return False
+    # =====================================================================
     
     except Exception as e:
         logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
@@ -531,8 +536,14 @@ async def _detect_total_pages(page: Page) -> int:
     return 0
 
 
-async def _intelligent_scroll_load(page: Page, expected_pages: int):
-    """Scroll com PyAutoGUI (controle real do mouse do sistema operacional)."""
+async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed: int = 50):
+    """Scroll com PyAutoGUI (controle real do mouse do sistema operacional).
+    
+    Args:
+        page: Página do Playwright
+        expected_pages: Número esperado de páginas
+        scroll_speed: Velocidade do scroll (padrão: 50, recomendado: 30-70)
+    """
     
     if not PYAUTOGUI_AVAILABLE:
         print("    ⚠ PyAutoGUI não disponível - instale: pip install pyautogui")
@@ -561,10 +572,10 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int):
     at_bottom_count = 0
     iteration = 0
     
-    print("    🚀 Modo: Velocidade máxima (50 cliques/scroll)")
+    print(f"    🚀 Modo: Velocidade máxima ({scroll_speed} cliques/scroll)")
     
     while True:  # Scroll infinito
-        pyautogui.scroll(-50)  # 50 cliques (era 30 = +66% velocidade)
+        pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
         iteration += 1
         
         # Verifica a cada 10 (era 15 = +50% frequência)
@@ -616,7 +627,7 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int):
     # Re-scroll ULTRA RÁPIDO
     print("    🔄 Re-scroll...")
     for i in range(80):  # 80 scrolls (era 100)
-        pyautogui.scroll(-50)  # 50 cliques (era 30)
+        pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
     
     await asyncio.sleep(0.5)  # 0.5s (era 1s)
     pyautogui.press('home')
@@ -873,50 +884,33 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
 # ============================================================================
 
 def download_view_only_pdf(service, file_id: str, save_path: str, 
-                          temp_download_dir: str) -> bool:
+                          temp_download_dir: str, scroll_speed: int = 50) -> bool:
     """
     Função principal para download de PDFs view-only.
     Usa automaticamente o melhor método disponível (Playwright > Selenium).
     
-    **CORREÇÃO: Executa async de forma que respeite cancelamento**
+    **CORRIGIDO: Event loop simplificado para permitir cancelamento instantâneo**
     """
     if PLAYWRIGHT_AVAILABLE:
-        # ========== CORREÇÃO: Tratamento adequado de Ctrl+C ==========
         try:
-            # Cria novo event loop se necessário
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Executa a coroutine
-            return loop.run_until_complete(
-                download_view_only_pdf_playwright(service, file_id, save_path, temp_download_dir)
+            # Usa asyncio.run() que cria e limpa o loop automaticamente
+            # Isso garante que Ctrl+C seja tratado adequadamente
+            return asyncio.run(
+                download_view_only_pdf_playwright(service, file_id, save_path, temp_download_dir, scroll_speed)
             )
         
         except KeyboardInterrupt:
+            # KeyboardInterrupt sempre passa através de asyncio.run()
             logging.info("Download interrompido pelo usuário (Ctrl+C)")
-            return False
+            raise  # Re-raise para propagação adequada
         
         except asyncio.CancelledError:
             logging.info("Task assíncrona cancelada")
             return False
         
-        finally:
-            # Cleanup de tasks pendentes
-            try:
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-                
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
-            except Exception as e:
-                logging.debug(f"Erro no cleanup do loop: {e}")
-        # =============================================================
+        except Exception as e:
+            logging.error(f"Erro no download PDF playwright: {e}")
+            return False
         
     elif SELENIUM_AVAILABLE:
         logging.warning("Playwright não disponível, usando fallback Selenium (menos eficiente)")
