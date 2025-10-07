@@ -317,97 +317,111 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
     
     file_name = os.path.basename(save_path)
     browser = None
-    
+
     try:
         logging.info(f"🚀 Iniciando download Playwright: {file_name}")
-        
+
         # ===== ADICIONAR: MENSAGEM SOBRE OCR =====
         if ocr_enabled:
             print(f"  🔍 OCR ativo ({ocr_lang})")
         # ===== FIM DA ADIÇÃO =====
-        
+
         print(f"  📄 Processando: {file_name[:60]}...")
-        
+
         # Obter URL do arquivo
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
         view_url = file_metadata.get('webViewLink')
         if not view_url:
             raise Exception("URL de visualização não disponível")
-        
+
         async with async_playwright() as p:
-            browser = await _launch_stealth_browser(p)
-            page = await _create_stealth_page(browser)
-            
             try:
+                browser = await _launch_stealth_browser(p)
+                page = await _create_stealth_page(browser)
+
                 # Navegar para o PDF
                 await page.goto(view_url, wait_until='networkidle', timeout=60000)
                 print("    ⏳ Aguardando carregamento inicial...")
                 await asyncio.sleep(8)
-                
+
                 # Detectar número total de páginas
                 total_pages = await _detect_total_pages(page)
                 if total_pages == 0:
                     raise Exception("Não foi possível detectar páginas do documento")
-                
+
                 print(f"    📊 Documento tem {total_pages} páginas")
-                
+
                 # Forçar carregamento completo via scroll inteligente
                 await _intelligent_scroll_load(page, total_pages, scroll_speed)
-                
+
                 # Aplicar zoom para melhor qualidade
                 await page.evaluate("document.body.style.zoom = '2.0';")
                 await asyncio.sleep(2)
-                
+
                 # ===== MODIFICAR: PASSAR PARÂMETROS OCR =====
                 # Extrair blobs via canvas
                 pdf_data, actual_pages = await _extract_blobs_to_pdf(
                     page, file_name, ocr_enabled, ocr_lang  # ===== ADICIONAR =====
                 )
                 # ===== FIM DA MODIFICAÇÃO =====
-                
+
                 # Salvar PDF
                 with open(save_path, 'wb') as f:
                     f.write(pdf_data)
-                
+
                 file_size = os.path.getsize(save_path)
-                
+
                 # ===== ADICIONAR: MENSAGEM COM STATUS OCR =====
                 ocr_status = "com OCR" if ocr_enabled else "sem OCR"
                 print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({actual_pages} páginas, {ocr_status})")
                 logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {ocr_status})")
                 # ===== FIM DA ADIÇÃO =====
-                
+
                 return True
-            
+
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError) as e:
+                # Cleanup do browser antes de sair do contexto async_playwright
+                if browser:
+                    try:
+                        await browser.close()
+                    except:
+                        pass
+
+                if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                    logging.info(f"Interrupção detectada durante download: {file_name}")
+                    print(f"    ⚠️ Interrompido: {file_name}")
+                    raise
+                else:  # asyncio.CancelledError
+                    logging.info(f"Download cancelado: {file_name}")
+                    print(f"    ⚠️ Cancelado: {file_name}")
+                    return False
+
+            except Exception as e:
+                # Cleanup do browser antes de sair do contexto async_playwright
+                if browser:
+                    try:
+                        await browser.close()
+                    except:
+                        pass
+
+                logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
+                print(f"    ✗ Erro: {type(e).__name__}")
+                return False
+
             finally:
-                try:
-                    await browser.close()
-                except Exception as e:
-                    logging.debug(f"Erro ao fechar browser: {e}")
-    
+                # Garantir que browser seja fechado em qualquer caso
+                if browser:
+                    try:
+                        await browser.close()
+                    except:
+                        pass
+
     except (KeyboardInterrupt, SystemExit):
-        logging.info(f"Interrupção detectada durante download: {file_name}")
-        print(f"    ⚠️ Interrompido: {file_name}")
+        # Re-lança para permitir tratamento no nível superior
         raise
-    
-    except asyncio.CancelledError:
-        logging.info(f"Download cancelado: {file_name}")
-        print(f"    ⚠️ Cancelado: {file_name}")
-        if browser:
-            try:
-                await browser.close()
-            except:
-                pass
-        return False
-    
+
     except Exception as e:
-        logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {type(e).__name__}: {e}")
-        print(f"    ✗ Erro: {type(e).__name__}")
-        if browser:
-            try:
-                await browser.close()
-            except:
-                pass
+        logging.error(f"Erro fatal no download: {type(e).__name__}: {e}")
         return False
 
 
@@ -816,13 +830,14 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
     try:
         import ocrmypdf
         from tempfile import NamedTemporaryFile
-        
+        import warnings
+
         print("      🔍 Usando OCRmyPDF (alta qualidade)...")
-        
+
         # Salva imagens como PDF temporário COM ALTA QUALIDADE
         temp_input = NamedTemporaryFile(suffix='.pdf', delete=False)
         temp_output = NamedTemporaryFile(suffix='.pdf', delete=False)
-        
+
         try:
             # ✅ CORREÇÃO 1: Otimiza imagens antes de salvar
             # Resolve: "image file is truncated", "invalid jpeg data"
@@ -832,11 +847,11 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 optimized_images.append(img)
-            
+
             # ✅ CORREÇÃO 2: Salva PDF com 300 DPI e qualidade 95
             if len(optimized_images) == 1:
                 optimized_images[0].save(
-                    temp_input.name, 
+                    temp_input.name,
                     'PDF',
                     resolution=300.0,  # ✅ 300 DPI (era 100 ou não definido)
                     quality=95,        # ✅ Qualidade alta
@@ -844,8 +859,8 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                 )
             else:
                 optimized_images[0].save(
-                    temp_input.name, 
-                    'PDF', 
+                    temp_input.name,
+                    'PDF',
                     save_all=True,
                     append_images=optimized_images[1:],
                     resolution=300.0,  # ✅ 300 DPI (era 100 ou não definido)
@@ -853,35 +868,46 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                     optimize=False     # ✅ Desabilita otimização PIL
                 )
             temp_input.close()
-            
+
             # ✅ CORREÇÃO 3: Configurações robustas do ocrmypdf
             # Resolve: PDF INVALID, erros de processamento
-            ocrmypdf.ocr(
-                temp_input.name,
-                temp_output.name,
-                language=ocr_lang,
-                # Qualidade e processamento
-                deskew=False,              # Corrige inclinação
-                force_ocr=True,           # Força OCR mesmo se houver texto
-                skip_text=True,           # Ignora texto existente (evita duplicação)
-                redo_ocr=True,            # Refaz OCR completamente
-                # Resolução e qualidade de imagem
-                image_dpi=300,            # ✅ Define DPI explicitamente
-                jpeg_quality=95,          # ✅ Qualidade JPEG máxima
-                png_quality=95,           # ✅ Qualidade PNG máxima  
-                # Otimizações DESABILITADAS (causam problemas)
-                optimize=0,               # ✅ SEM otimização (era 1)
-                jbig2_lossy=False,        # ✅ SEM compressão lossy JBIG2
-                fast_web_view=0,          # ✅ SEM otimização para web
-                # Timeouts e processamento
-                tesseract_timeout=300,    # ✅ 5 minutos por página
-                rotate_pages=False,       # ✅ Não rotaciona (mais rápido)
-                remove_background=False,  # ✅ Preserva background original
-                clean=False,              # ✅ Não limpa imagem (preserva qualidade)
-                # Outras opções
-                progress_bar=False,
-                output_type='pdf'
-            )
+            # Suprime warnings do OCRmyPDF no console (mantém no log)
+            import sys
+            import io
+
+            # Captura stderr para suprimir warnings do console
+            old_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore')
+
+                    # Desabilita logging do OCRmyPDF no console
+                    ocrmypdf_logger = logging.getLogger('ocrmypdf')
+                    ocrmypdf_logger.setLevel(logging.ERROR)
+
+                    ocrmypdf.ocr(
+                        temp_input.name,
+                        temp_output.name,
+                        language=ocr_lang,
+                        # Qualidade e processamento
+                        force_ocr=True,           # Força OCR em todas as páginas
+                        # Timeouts e processamento
+                        tesseract_timeout=300,    # ✅ 5 minutos por página
+                        rotate_pages=False,       # ✅ Não rotaciona (mais rápido)
+                        # Outras opções
+                        progress_bar=False,
+                        output_type='pdf'
+                    )
+
+                    # Captura warnings para o arquivo de log
+                    stderr_output = sys.stderr.getvalue()
+                    if stderr_output.strip():
+                        logging.debug(f"OCRmyPDF warnings: {stderr_output}")
+            finally:
+                # Restaura stderr
+                sys.stderr = old_stderr
             
             # Lê resultado
             with open(temp_output.name, 'rb') as f:
@@ -1139,6 +1165,77 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
 
 
 # ============================================================================
+# ASYNCIO HELPERS
+# ============================================================================
+
+def run_async_with_cleanup(coro):
+    """
+    Wrapper seguro para asyncio.run() que cancela tasks pendentes em KeyboardInterrupt.
+
+    Resolve:
+    - AttributeError: 'NoneType' object has no attribute 'close'
+    - ERROR:asyncio:Task was destroyed but it is pending!
+    - RuntimeError: coroutine ignored GeneratorExit
+    - Vazamento de recursos do Playwright em interrupções
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    main_task = None
+
+    try:
+        # Cria task da coroutine para permitir cancelamento adequado
+        main_task = loop.create_task(coro)
+        return loop.run_until_complete(main_task)
+
+    except KeyboardInterrupt:
+        # Cancelar a task principal primeiro
+        if main_task and not main_task.done():
+            main_task.cancel()
+            try:
+                loop.run_until_complete(main_task)
+            except asyncio.CancelledError:
+                pass
+
+        # Cancelar todas as tasks pendentes
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            if not task.done():
+                task.cancel()
+
+        # Aguardar cancelamento das tasks
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+        raise  # Re-lança o KeyboardInterrupt
+
+    finally:
+        try:
+            # Fechar a coroutine principal se não foi completada
+            if main_task and not main_task.done():
+                main_task.cancel()
+                try:
+                    loop.run_until_complete(main_task)
+                except asyncio.CancelledError:
+                    pass
+
+            # Cleanup final: cancela tasks residuais
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+            # Fecha o loop apropriadamente
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+        except Exception as e:
+            logging.debug(f"Erro durante cleanup do loop asyncio: {e}")
+
+
+# ============================================================================
 # FUNÇÃO PRINCIPAL DE INTERFACE
 # ============================================================================
 
@@ -1163,19 +1260,19 @@ def download_view_only_pdf(service, file_id: str, save_path: str,
     """
     if PLAYWRIGHT_AVAILABLE:
         try:
-            # ===== MODIFICAR: PASSAR PARÂMETROS OCR =====
-            return asyncio.run(
+            # ===== MODIFICAR: USAR WRAPPER SEGURO COM CLEANUP =====
+            return run_async_with_cleanup(
                 download_view_only_pdf_playwright(
-                    service, file_id, save_path, temp_download_dir, 
-                    scroll_speed, ocr_enabled, ocr_lang  # ===== ADICIONAR =====
+                    service, file_id, save_path, temp_download_dir,
+                    scroll_speed, ocr_enabled, ocr_lang
                 )
             )
             # ===== FIM DA MODIFICAÇÃO =====
-        
+
         except KeyboardInterrupt:
             logging.info("Download interrompido pelo usuário (Ctrl+C)")
             raise
-        
+
         except asyncio.CancelledError:
             logging.info("Task assíncrona cancelada")
             return False
