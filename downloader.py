@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Optional, List, Dict
 from functools import wraps
 
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
+    logging.warning("PyAutoGUI não disponível. Instale: pip install pyautogui")
+
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -20,18 +27,13 @@ try:
     from playwright.async_api import async_playwright, Page, Browser
     PLAYWRIGHT_AVAILABLE = True
     
-    # Tenta importar stealth (opcional)
+    # Tenta importar stealth (opcional - apenas async)
     try:
         from playwright_stealth import stealth_async
         STEALTH_AVAILABLE = True
     except ImportError:
-        try:
-            # Tenta importação alternativa
-            from playwright_stealth import stealth
-            STEALTH_AVAILABLE = "sync"
-        except ImportError:
-            STEALTH_AVAILABLE = False
-            logging.info("playwright-stealth não disponível - usando stealth nativo")
+        STEALTH_AVAILABLE = False
+        logging.info("playwright-stealth não disponível - usando stealth nativo")
             
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -339,15 +341,15 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 await asyncio.sleep(2)
                 
                 # Extrair blobs via canvas
-                pdf_data = await _extract_blobs_to_pdf(page, file_name)
+                pdf_data, actual_pages = await _extract_blobs_to_pdf(page, file_name)
                 
                 # Salvar PDF
                 with open(save_path, 'wb') as f:
                     f.write(pdf_data)
                 
                 file_size = os.path.getsize(save_path)
-                print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({total_pages} páginas)")
-                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({total_pages} páginas)")
+                print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({actual_pages} páginas)")
+                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas)")
                 
                 return True
             
@@ -455,86 +457,158 @@ async def _create_stealth_page(browser: Browser) -> Page:
 
 
 async def _detect_total_pages(page: Page) -> int:
-    """Detecta número total de páginas com múltiplas estratégias."""
-    # Estratégia 1: Metadados do DOM
-    total_from_metadata = await page.evaluate("""() => {
-        const indicators = [
-            document.querySelector('[aria-label*="Page"]'),
-            document.querySelector('[data-page-count]'),
-            document.querySelector('.page-count')
+    """Detecta número total de páginas - versão mais robusta."""
+    
+    await asyncio.sleep(3)  # Aguarda página carregar completamente
+    
+    # Estratégia 1: Busca AGRESSIVA por indicador de páginas
+    total_from_ui = await page.evaluate("""() => {
+        // Busca em todos os textos da página
+        const allText = document.body.innerText;
+        
+        // Padrões: "de 9", "of 9", "/ 9", "Page 1 of 9"
+        const patterns = [
+            /(?:de|of)\\s+(\\d+)/gi,
+            /\\/\\s*(\\d+)/g,
+            /Page\\s+\\d+\\s+of\\s+(\\d+)/gi,
+            /(\\d+)\\s+(?:pages|páginas)/gi
         ];
         
-        for (let indicator of indicators) {
-            if (indicator) {
-                const text = indicator.textContent || indicator.getAttribute('aria-label') || '';
-                const match = text.match(/of\\s+(\\d+)|Page\\s+\\d+\\s+of\\s+(\\d+)|(\\d+)\\s+pages/i);
-                if (match) return parseInt(match[1] || match[2] || match[3]);
+        let maxPages = 0;
+        for (let pattern of patterns) {
+            const matches = allText.matchAll(pattern);
+            for (let match of matches) {
+                const num = parseInt(match[1]);
+                if (num > maxPages && num < 1000) {  // Sanity check
+                    maxPages = num;
+                }
             }
         }
-        return 0;
+        
+        return maxPages;
     }""")
     
-    if total_from_metadata > 0:
-        return total_from_metadata
+    if total_from_ui > 0:
+        print(f"    📊 Documento tem {total_from_ui} páginas (detectado)")
+        return total_from_ui
     
-    # Estratégia 2: Contar imagens blob atuais
+    # Estratégia 2: Conta páginas atualmente visíveis (fallback)
     current_count = await page.evaluate("""() => {
-        const imgs = Array.from(document.getElementsByTagName('img'));
-        return imgs.filter(img => 
-            img.src.startsWith('blob:') && img.naturalHeight > 100
-        ).length;
+        return document.querySelectorAll('img[src^="blob:"]').length;
     }""")
     
-    return current_count
+    # Se só detectou páginas visíveis, assume que tem mais
+    if current_count > 0:
+        print(f"    ⚠ Detectadas apenas {current_count} páginas visíveis (pode ter mais)")
+        return 0  # Retorna 0 para forçar scroll completo
+    
+    return 0
 
 
 async def _intelligent_scroll_load(page: Page, expected_pages: int):
-    """Scroll AGRESSIVO - mouse.wheel para evitar TrustedHTML."""
-    print("    🔄 Renderizando TODAS as páginas...")
+    """Scroll com PyAutoGUI (controle real do mouse do sistema operacional)."""
+    
+    if not PYAUTOGUI_AVAILABLE:
+        print("    ⚠ PyAutoGUI não disponível - instale: pip install pyautogui")
+        return
+    
+    print("    🖱️ Scroll PyAutoGUI (otimizado)")
+    print("    ⚠ Não use mouse/teclado (~1 min)")
+    print("    ⏱️ Preparando...")
+    await asyncio.sleep(1)
+    
+    # Traz foco para a janela
+    try:
+        w, h = pyautogui.size()
+        pyautogui.click(w // 2, h // 2)
+        await asyncio.sleep(0.5)
+    except Exception as e:
+        logging.debug(f"Erro ao dar foco: {e}")
+    
+    print("    🔄 Iniciando scroll (você verá o mouse se mexendo)...")
     
     loaded = 0
     last = 0
-    stable = 0
     
-    # 200 scrolls de 1000px cada = até 200.000px
-    for i in range(200):
-        await page.mouse.wheel(0, 1000)
-        await asyncio.sleep(0.15)
+    # SCROLL OTIMIZADO: Adaptativo + 30 cliques
+    max_stable = 0
+    stable_count = 0
+    
+    for i in range(2000):  # Aumentado para PDFs grandes
+        pyautogui.scroll(-30)  # 30 cliques (50% mais rápido)
         
-        if i % 10 == 0:
+        # Verifica a cada 15 (mais frequente)
+        if i % 15 == 0 and i > 0:
             try:
-                loaded = await page.evaluate("""() => Array.from(document.getElementsByTagName('img')).filter(img => img.src && img.src.startsWith('blob:') && img.naturalHeight > 100).length""")
+                loaded = await page.evaluate("() => document.querySelectorAll('img[src^=\"blob:\"]').length")
                 
-                if loaded > last:
-                    print(f"    📄 {loaded} páginas detectadas...")
-                    last = loaded
-                    stable = 0
+                # Mostra progresso a cada 60
+                if i % 60 == 0:
+                    print(f"    📄 {loaded} páginas (scroll {i}/2000)...")
+                
+                # Parada inteligente: estável por 3 verificações consecutivas
+                if loaded == last and loaded > 0:
+                    stable_count += 1
+                    if stable_count >= 3 and i > 100:  # 3 verificações estáveis
+                        print(f"    ✓ Estável em {loaded} páginas (scroll {i})")
+                        break
                 else:
-                    stable += 1
-                
-                if (expected_pages and loaded >= expected_pages and stable >= 2) or stable >= 5:
-                    break
+                    stable_count = 0
+                    
+                last = loaded
             except:
                 pass
     
-    await asyncio.sleep(2)
-    await page.mouse.wheel(0, -99999)  # Volta ao topo
+    print("    ⏳ Aguardando renderização (3s)...")
+    await asyncio.sleep(3)
+    
+    print("    ⬆️ Voltando ao topo...")
+    pyautogui.press('home')
     await asyncio.sleep(1)
-    print(f"    ✓ {loaded} páginas renderizadas")
+    
+    # Re-scroll INSTANTÂNEO (sem sleep)
+    print("    🔄 Re-scroll verificação...")
+    for i in range(100):  # Reduzido de 150 para 100
+        pyautogui.scroll(-30)  # 30 cliques (3x mais rápido)
+    
+    await asyncio.sleep(1)  # Reduzido de 3s para 1s
+    pyautogui.press('home')
+    await asyncio.sleep(1)  # Reduzido de 2s para 1s
+    
+    try:
+        final = await page.evaluate("""() => {
+            const imgs = document.querySelectorAll('img[src^="blob:"]');
+            const unique = new Set();
+            imgs.forEach(img => {
+                if (img.naturalHeight > 100) unique.add(img.src);
+            });
+            return unique.size;
+        }""")
+        print(f"    ✓ TOTAL FINAL: {final} páginas renderizadas")
+    except Exception as e:
+        print(f"    ℹ️ Última contagem: {loaded} páginas")
 
-async def _extract_blobs_to_pdf(page: Page, file_name: str) -> bytes:
-    """Extrai via canvas direto - SEM jsPDF ou add_script_tag."""
-    print("    🎨 Extraindo imagens...")
+
+async def _extract_blobs_to_pdf(page: Page, file_name: str) -> tuple[bytes, int]:
+    """Extrai blobs via canvas e converte para PDF com PIL (SEM jsPDF).
+    
+    Returns:
+        tuple[bytes, int]: (PDF bytes, número de páginas)
+    """
+    print("    🎨 Extraindo imagens das páginas...")
     
     from PIL import Image
     import base64
     from io import BytesIO
     
-    # Extrai blobs como data URLs
+    # Extrai blobs como data URLs via canvas
     data_urls = await page.evaluate("""async () => {
         const imgs = Array.from(document.getElementsByTagName('img'));
-        const blobs = imgs.filter(img => img.src && img.src.startsWith('blob:') && img.naturalHeight > 100);
+        const blobs = imgs.filter(img => 
+            img.src && img.src.startsWith('blob:') && img.naturalHeight > 100
+        );
         
+        // Remove duplicatas e ordena
         const unique = new Map();
         blobs.forEach(img => {
             if (!unique.has(img.src)) {
@@ -545,6 +619,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str) -> bytes:
         
         const sorted = Array.from(unique.entries()).sort((a, b) => a[1] - b[1]);
         
+        // Converte cada blob para data URL via canvas
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         const results = [];
@@ -562,28 +637,56 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str) -> bytes:
         return results;
     }""")
     
-    if not data_urls:
-        raise Exception('Nenhuma página encontrada')
+    if not data_urls or len(data_urls) == 0:
+        raise Exception('Nenhuma página encontrada para extrair')
     
     print(f"    📄 Convertendo {len(data_urls)} páginas para PDF...")
     
-    # Converte para PIL
+    # Converte data URLs para PIL Images (otimizado)
     pil_images = []
-    for data_url in data_urls:
-        img_b64 = data_url.split(',')[1]
-        img_bytes = base64.b64decode(img_b64)
-        pil_img = Image.open(BytesIO(img_bytes))
-        pil_images.append(pil_img)
+    for idx, data_url in enumerate(data_urls):
+        try:
+            img_b64 = data_url.split(',')[1]
+            img_bytes = base64.b64decode(img_b64)
+            pil_img = Image.open(BytesIO(img_bytes))
+            
+            # Converte para RGB se necessário
+            if pil_img.mode == 'RGBA':
+                rgb_img = Image.new('RGB', pil_img.size, (255, 255, 255))
+                rgb_img.paste(pil_img, mask=pil_img.split()[3])
+                pil_img = rgb_img
+            
+            pil_images.append(pil_img)
+            
+            # Progresso a cada 5 páginas (menos output = mais rápido)
+            if (idx + 1) % 5 == 0 or (idx + 1) == len(data_urls):
+                print(f"      ✓ {idx + 1}/{len(data_urls)} páginas")
+        except Exception as e:
+            logging.warning(f"Erro página {idx + 1}: {e}")
     
-    # Cria PDF
+    if not pil_images:
+        raise Exception('Falha ao converter imagens')
+    
+    # Cria PDF com PIL
     pdf_buf = BytesIO()
     if len(pil_images) == 1:
         pil_images[0].save(pdf_buf, 'PDF', resolution=100.0)
     else:
-        pil_images[0].save(pdf_buf, 'PDF', save_all=True, append_images=pil_images[1:], resolution=100.0)
+        pil_images[0].save(
+            pdf_buf,
+            'PDF',
+            save_all=True,
+            append_images=pil_images[1:],
+            resolution=100.0
+        )
     
-    print(f"    ✓ PDF gerado ({len(pil_images)} páginas)")
-    return pdf_buf.getvalue()
+    print(f"    ✓ PDF criado com {len(pil_images)} páginas")
+    return (pdf_buf.getvalue(), len(pil_images))
+
+
+# ============================================================================
+# FALLBACK: DOWNLOAD COM SELENIUM (compatibilidade com código existente)
+# ============================================================================
 
 def download_view_only_pdf_selenium(service, file_id: str, save_path: str, 
                                    temp_download_dir: str) -> bool:
