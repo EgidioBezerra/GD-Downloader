@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Optional, List, Dict
 from functools import wraps
 
+# Interface unificada
+from ui import ui
+
 try:
     import pyautogui
     PYAUTOGUI_AVAILABLE = True
@@ -99,26 +102,50 @@ def retry_on_failure(max_attempts: int = 3, delay: int = 2, exponential_backoff:
 # ============================================================================
 
 @retry_on_failure(max_attempts=5, delay=2)
-def download_standard_file(service, file_id: str, save_path: str) -> bool:
-    """Download de arquivos padrão com retry automático."""
+def download_standard_file(service, file_id: str, save_path: str, show_progress: bool = True,
+                           progress_callback=None) -> bool:
+    """
+    Download de arquivos padrão com retry automático.
+
+    Args:
+        service: Serviço do Google Drive
+        file_id: ID do arquivo
+        save_path: Caminho para salvar
+        show_progress: Se True, mostra barra tqdm (padrão: True)
+        progress_callback: Função callback(current, total, file_name) para reportar progresso
+    """
     file_name = os.path.basename(save_path)
-    
+
     try:
         request = service.files().get_media(fileId=file_id)
         file_metadata = service.files().get(fileId=file_id, fields='size').execute()
         total_size = int(file_metadata.get('size', 0))
 
         with open(save_path, 'wb') as f:
-            with tqdm(
-                total=total_size, unit='B', unit_scale=True,
-                unit_divisor=1024, desc=f" {file_name}", leave=False
-            ) as pbar:
+            if show_progress:
+                # Barra de progresso individual (para download único)
+                with tqdm(
+                    total=total_size, unit='B', unit_scale=True,
+                    unit_divisor=1024, desc=f" {file_name}", leave=False
+                ) as pbar:
+                    downloader = MediaIoBaseDownload(f, request, chunksize=1024*1024)
+                    done = False
+                    while not done:
+                        status, done = downloader.next_chunk()
+                        if status:
+                            pbar.update(status.resumable_progress - pbar.n)
+                            # Callback para progresso (se fornecido)
+                            if progress_callback:
+                                progress_callback(status.resumable_progress, total_size, file_name)
+            else:
+                # Download silencioso com callback de progresso (para múltiplos workers)
                 downloader = MediaIoBaseDownload(f, request, chunksize=1024*1024)
                 done = False
                 while not done:
                     status, done = downloader.next_chunk()
-                    if status:
-                        pbar.update(status.resumable_progress - pbar.n)
+                    # Callback para progresso (se fornecido)
+                    if status and progress_callback:
+                        progress_callback(status.resumable_progress, total_size, file_name)
         
         logging.info(f"✓ SUCESSO (Download Padrão): '{file_name}' → '{save_path}'")
         return True
@@ -323,10 +350,10 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
 
         # ===== ADICIONAR: MENSAGEM SOBRE OCR =====
         if ocr_enabled:
-            print(f"  🔍 OCR ativo ({ocr_lang})")
+            ui.ocr_active(ocr_lang, indent=1)
         # ===== FIM DA ADIÇÃO =====
 
-        print(f"  📄 Processando: {file_name[:60]}...")
+        ui.file_action(f"Processando: {file_name[:60]}...", indent=1)
 
         # Obter URL do arquivo
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
@@ -341,7 +368,7 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
 
                 # Navegar para o PDF
                 await page.goto(view_url, wait_until='networkidle', timeout=60000)
-                print("    ⏳ Aguardando carregamento inicial...")
+                ui.waiting(8, indent=2)
                 await asyncio.sleep(8)
 
                 # Detectar número total de páginas
@@ -349,7 +376,7 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 if total_pages == 0:
                     raise Exception("Não foi possível detectar páginas do documento")
 
-                print(f"    📊 Documento tem {total_pages} páginas")
+                ui.document_pages(total_pages, indent=2)
 
                 # Forçar carregamento completo via scroll inteligente
                 await _intelligent_scroll_load(page, total_pages, scroll_speed)
@@ -372,9 +399,8 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                 file_size = os.path.getsize(save_path)
 
                 # ===== ADICIONAR: MENSAGEM COM STATUS OCR =====
-                ocr_status = "com OCR" if ocr_enabled else "sem OCR"
-                print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({actual_pages} páginas, {ocr_status})")
-                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {ocr_status})")
+                ui.file_complete(file_size / 1024 / 1024, actual_pages, ocr_enabled, indent=2)
+                logging.info(f"✓ SUCESSO (PDF View-Only): '{file_name}' ({actual_pages} páginas, {'com OCR' if ocr_enabled else 'sem OCR'})")
                 # ===== FIM DA ADIÇÃO =====
 
                 return True
@@ -390,11 +416,11 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
 
                 if isinstance(e, (KeyboardInterrupt, SystemExit)):
                     logging.info(f"Interrupção detectada durante download: {file_name}")
-                    print(f"    ⚠️ Interrompido: {file_name}")
+                    ui.file_interrupted(file_name, indent=2)
                     raise
                 else:  # asyncio.CancelledError
                     logging.info(f"Download cancelado: {file_name}")
-                    print(f"    ⚠️ Cancelado: {file_name}")
+                    ui.file_cancelled(file_name, indent=2)
                     return False
 
             except Exception as e:
@@ -412,7 +438,7 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
                         pass
 
                 logging.error(f"✗ FALHA (PDF View-Only) '{file_name}': {error_name}: {e}")
-                print(f"    ✗ Erro: {error_name}")
+                ui.error(f"Erro: {error_name}", indent=2)
                 return False
 
             finally:
@@ -556,17 +582,17 @@ async def _detect_total_pages(page: Page) -> int:
     }""")
     
     if total_from_ui > 0:
-        print(f"    📊 Documento tem {total_from_ui} páginas (detectado)")
+        ui.document_pages(total_from_ui, indent=2)
         return total_from_ui
-    
+
     # Estratégia 2: Conta páginas atualmente visíveis (fallback)
     current_count = await page.evaluate("""() => {
         return document.querySelectorAll('img[src^="blob:"]').length;
     }""")
-    
+
     # Se só detectou páginas visíveis, assume que tem mais
     if current_count > 0:
-        print(f"    ⚠ Detectadas apenas {current_count} páginas visíveis (pode ter mais)")
+        ui.warning(f"Detectadas apenas {current_count} páginas visíveis (pode ter mais)", indent=2)
         return 0  # Retorna 0 para forçar scroll completo
     
     return 0
@@ -582,14 +608,14 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
     """
     
     if not PYAUTOGUI_AVAILABLE:
-        print("    ⚠ PyAutoGUI não disponível - instale: pip install pyautogui")
+        ui.warning("PyAutoGUI não disponível - instale: pip install pyautogui", indent=2)
         return
-    
-    print("    🖱️ Scroll PyAutoGUI (otimizado)")
-    print("    ⚠ Não use mouse (~40s)")
-    print("    ⏱️ Preparando...")
+
+    ui.info("Scroll PyAutoGUI (otimizado)", emoji="🖱️", indent=2)
+    ui.scroll_warning(indent=2)
+    ui.dim("Preparando...", indent=2)
     await asyncio.sleep(1)
-    
+
     # Traz foco para a janela
     try:
         w, h = pyautogui.size()
@@ -597,18 +623,18 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
         await asyncio.sleep(0.5)
     except Exception as e:
         logging.debug(f"Erro ao dar foco: {e}")
-    
-    print("    🔄 Iniciando scroll (você verá o mouse se mexendo)...")
-    
+
+    ui.info("Iniciando scroll (você verá o mouse se mexendo)...", emoji="🔄", indent=2)
+
     loaded = 0
     last = 0
-    
+
     # SCROLL MÁXIMA VELOCIDADE: 50 cliques + infinito
     stable_count = 0
     at_bottom_count = 0
     iteration = 0
-    
-    print(f"    🚀 Modo: Velocidade máxima ({scroll_speed} cliques/scroll)")
+
+    ui.special(f"Modo: Velocidade máxima ({scroll_speed} cliques/scroll)", emoji="🚀", indent=2)
     
     while True:  # Scroll infinito
         pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
@@ -621,14 +647,14 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
                 
                 # Progresso a cada 50
                 if iteration % 50 == 0:
-                    print(f"    📄 {loaded} páginas (scroll {iteration})...")
-                
+                    ui.info(f"{loaded} páginas (scroll {iteration})...", emoji="📄", indent=2)
+
                 # Verifica fim do documento
                 at_bottom = await page.evaluate("""() => {
-                    return (window.innerHeight + window.scrollY) >= 
+                    return (window.innerHeight + window.scrollY) >=
                            (document.documentElement.scrollHeight - 100);
                 }""")
-                
+
                 # Parada: 3 estáveis + 2 no fim
                 if loaded == last and loaded > 0:
                     stable_count += 1
@@ -636,39 +662,39 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
                         at_bottom_count += 1
                     else:
                         at_bottom_count = 0
-                    
+
                     if stable_count >= 3 and at_bottom_count >= 2 and iteration > 80:
-                        print(f"    ✓ Fim: {loaded} páginas (iter {iteration})")
+                        ui.success(f"Fim: {loaded} páginas (iter {iteration})", indent=2)
                         break
                 else:
                     stable_count = 0
                     at_bottom_count = 0
-                
+
                 last = loaded
-                
+
                 # Limite segurança
                 if iteration >= 5000:
-                    print(f"    ⚠ Limite (5000): {loaded} páginas")
+                    ui.warning(f"Limite (5000): {loaded} páginas", indent=2)
                     break
             except:
                 pass
     
-    print("    ⏳ Aguardando (2s)...")
+    ui.waiting(2, indent=2)
     await asyncio.sleep(2)
-    
-    print("    ⬆️ Voltando ao topo...")
+
+    ui.info("Voltando ao topo...", emoji="⬆️", indent=2)
     pyautogui.press('home')
     await asyncio.sleep(1)
-    
+
     # Re-scroll ULTRA RÁPIDO
-    print("    🔄 Re-scroll...")
+    ui.info("Re-scroll...", emoji="🔄", indent=2)
     for i in range(80):  # 80 scrolls (era 100)
         pyautogui.scroll(-scroll_speed)  # Velocidade configurável (padrão: 50)
-    
+
     await asyncio.sleep(0.5)  # 0.5s (era 1s)
     pyautogui.press('home')
     await asyncio.sleep(0.5)  # 0.5s (era 1s)
-    
+
     try:
         final = await page.evaluate("""() => {
             const imgs = document.querySelectorAll('img[src^="blob:"]');
@@ -678,9 +704,9 @@ async def _intelligent_scroll_load(page: Page, expected_pages: int, scroll_speed
             });
             return unique.size;
         }""")
-        print(f"    ✓ TOTAL FINAL: {final} páginas renderizadas")
+        ui.success(f"TOTAL FINAL: {final} páginas renderizadas", indent=2)
     except Exception as e:
-        print(f"    ℹ️ Última contagem: {loaded} páginas")
+        ui.info(f"Última contagem: {loaded} páginas", emoji="ℹ️", indent=2)
 
 
 async def _extract_blobs_to_pdf(page: Page, file_name: str,
@@ -698,8 +724,8 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
     Returns:
         tuple[bytes, int]: (PDF bytes, número de páginas)
     """
-    print("    🎨 Extraindo imagens das páginas...")
-    
+    ui.processing("Extraindo imagens das páginas...", emoji="🎨", indent=2)
+
     from PIL import Image
     import base64
     from io import BytesIO
@@ -742,9 +768,9 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
     
     if not data_urls or len(data_urls) == 0:
         raise Exception('Nenhuma página encontrada para extrair')
-    
-    print(f"    📄 Convertendo {len(data_urls)} páginas para PDF...")
-    
+
+    ui.file_action(f"Convertendo {len(data_urls)} páginas para PDF...", indent=2)
+
     # Converte data URLs para PIL Images (otimizado)
     pil_images = []
     for idx, data_url in enumerate(data_urls):
@@ -752,18 +778,18 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
             img_b64 = data_url.split(',')[1]
             img_bytes = base64.b64decode(img_b64)
             pil_img = Image.open(BytesIO(img_bytes))
-            
+
             # Converte para RGB se necessário
             if pil_img.mode == 'RGBA':
                 rgb_img = Image.new('RGB', pil_img.size, (255, 255, 255))
                 rgb_img.paste(pil_img, mask=pil_img.split()[3])
                 pil_img = rgb_img
-            
+
             pil_images.append(pil_img)
-            
+
             # Progresso a cada 5 páginas
             if (idx + 1) % 5 == 0 or (idx + 1) == len(data_urls):
-                print(f"      ✓ {idx + 1}/{len(data_urls)} páginas")
+                ui.progress_update(idx + 1, len(data_urls), label="páginas", indent=3)
         except Exception as e:
             logging.warning(f"Erro página {idx + 1}: {e}")
     
@@ -772,9 +798,9 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
     
     # ===== ADICIONAR: LÓGICA DE OCR =====
     pdf_buf = BytesIO()
-    
+
     if ocr_enabled:
-        print(f"    🔍 Aplicando OCR ({ocr_lang})...")
+        ui.processing(f"Aplicando OCR ({ocr_lang})...", emoji="🔍", indent=2)
         try:
             pdf_bytes = _create_pdf_with_ocr(pil_images, ocr_lang)
             pdf_buf.write(pdf_bytes)
@@ -806,9 +832,9 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 resolution=300.0,  # ✅ CORRIGIDO (era 100.0)
                 quality=95          # ✅ ADICIONADO
             )
-    
+
     status = "com OCR" if ocr_enabled else "sem OCR"
-    print(f"    ✓ PDF criado {status} ({len(pil_images)} páginas)")
+    ui.success(f"PDF criado {status} ({len(pil_images)} páginas)", indent=2)
     
     return (pdf_buf.getvalue(), len(pil_images))
 
@@ -840,7 +866,7 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
         from tempfile import NamedTemporaryFile
         import warnings
 
-        print("      🔍 Usando OCRmyPDF (alta qualidade)...")
+        ui.info("Usando OCRmyPDF (alta qualidade)...", emoji="🔍", indent=3)
 
         # Salva imagens como PDF temporário COM ALTA QUALIDADE
         temp_input = NamedTemporaryFile(suffix='.pdf', delete=False)
@@ -920,8 +946,8 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
             # Lê resultado
             with open(temp_output.name, 'rb') as f:
                 pdf_bytes = f.read()
-            
-            print(f"      ✓ OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)")
+
+            ui.success(f"OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)", indent=3)
             return pdf_bytes
             
         finally:
@@ -945,8 +971,8 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
         from reportlab.lib.utils import ImageReader
         from tempfile import NamedTemporaryFile
         
-        print("      🔍 Usando pytesseract + reportlab...")
-        
+        ui.info("Usando pytesseract + reportlab...", emoji="🔍", indent=3)
+
         temp_pdf = NamedTemporaryFile(suffix='.pdf', delete=False)
         
         try:
@@ -992,8 +1018,8 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
                                 c.drawString(x, y, text)
                     
                     if (idx + 1) % 3 == 0:
-                        print(f"        OCR: {idx + 1}/{len(pil_images)}")
-                
+                        ui.dim(f"OCR: {idx + 1}/{len(pil_images)}", indent=4)
+
                 except Exception as e:
                     logging.warning(f"Erro OCR página {idx + 1}: {e}")
                 
@@ -1004,8 +1030,8 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
             # Lê resultado
             with open(temp_pdf.name, 'rb') as f:
                 pdf_bytes = f.read()
-            
-            print(f"      ✓ OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)")
+
+            ui.success(f"OCR concluído ({len(pdf_bytes) / 1024 / 1024:.2f} MB)", indent=3)
             return pdf_bytes
             
         finally:
@@ -1059,8 +1085,8 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
     
     try:
         logging.info(f"Download PDF (Método Selenium): {file_name}")
-        print(f"  Processando: {file_name[:60]}...")
-        
+        ui.file_action(f"Processando: {file_name[:60]}...", indent=1)
+
         file_metadata = service.files().get(fileId=file_id, fields='webViewLink').execute()
         view_url = file_metadata.get('webViewLink')
         if not view_url:
@@ -1076,16 +1102,16 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--force-device-scale-factor=2')
-        
+
         os.environ['WDM_LOG_LEVEL'] = '0'
-        
+
         service_obj = Service(ChromeDriverManager().install())
         service_obj.log_path = os.devnull if os.name != 'nt' else 'NUL'
-        
+
         driver = webdriver.Chrome(service=service_obj, options=options)
         driver.get(view_url)
-        
-        print("    Aguardando carregamento...")
+
+        ui.dim("Aguardando carregamento...", indent=2)
         time.sleep(12)
         
         # Scroll e captura (código original simplificado)
@@ -1110,9 +1136,9 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
         if all_pages == 0:
             driver.quit()
             return False
-        
-        print(f"    Capturando {all_pages} páginas...")
-        
+
+        ui.processing(f"Capturando {all_pages} páginas...", indent=2)
+
         for page_idx in range(all_pages):
             try:
                 page_data = driver.execute_script(f"""
@@ -1147,17 +1173,17 @@ def _download_pdf_with_selenium_auto(service, file_id, file_name, save_path, tem
         
         if not page_images:
             return False
-        
-        print(f"    Gerando PDF ({len(page_images)} páginas)...")
-        
+
+        ui.processing(f"Gerando PDF ({len(page_images)} páginas)...", indent=2)
+
         if len(page_images) == 1:
             page_images[0].save(save_path, 'PDF', resolution=100.0, quality=95)
         else:
             page_images[0].save(save_path, 'PDF', resolution=100.0, save_all=True,
                               append_images=page_images[1:], quality=95)
-        
+
         file_size = os.path.getsize(save_path)
-        print(f"    ✓ Completo: {file_size / 1024 / 1024:.2f} MB ({len(page_images)} páginas)")
+        ui.file_complete(file_size / 1024 / 1024, len(page_images), has_ocr=False, indent=2)
         logging.info(f"SUCESSO (PDF): '{file_name}' ({len(page_images)} páginas)")
         
         return True
