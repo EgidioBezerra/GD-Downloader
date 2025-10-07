@@ -1,0 +1,223 @@
+{
+  "meta": {
+    "name": "English",
+    "code": "en",
+    "author": "GD-Downloader Team",
+    "version": "2.5"
+  },
+
+  "app": {
+    "name": "Google Drive Downloader",
+    "tagline": "Smart download with pause/resume",
+    "version": "Version 2.5 - Unified Interface"
+  },
+
+  "args": {
+    "description": "Google Drive Downloader - Download with pause/resume support",
+    "folder_url": "Google Drive folder URL",
+    "destination": "Local destination path",
+    "workers": "Number of simultaneous downloads (default: 5, max: 20)",
+    "gpu": "GPU acceleration for videos (nvidia/intel/amd)",
+    "scroll_speed": "Scroll speed for view-only PDFs (default: 50, recommended: 30-70)",
+    "ocr": "Apply OCR to view-only PDFs to make them searchable (requires tesseract)",
+    "ocr_lang": "Languages for OCR (default: por+eng). Use 'por' for Portuguese, 'eng' for English, or combine with +",
+    "only_view_only": "Download only view-only files",
+    "only_videos": "Download only videos",
+    "only_docs": "Download only documents (excludes videos)",
+    "resume": "Resume previous download",
+    "clear_checkpoint": "Clear checkpoint and restart",
+    "debug_html": "Save HTML pages for debugging",
+    "no_legal_warning": "Suppress legal warning (use responsibly)",
+    "language": "Interface language (en/pt). Default: en"
+  },
+
+  "help": {
+    "examples_title": "\nExamples:",
+    "example_basic": "python main.py \"FOLDER_URL\" ./downloads",
+    "example_videos": "python main.py \"URL\" ./videos --only-videos --workers 15",
+    "example_docs": "python main.py \"URL\" ./docs --only-docs --resume",
+    "example_view_only": "python main.py \"URL\" ./downloads --only-view-only --workers 20",
+    "example_ocr": "python main.py \"URL\" ./pdfs --only-docs --ocr",
+    "example_ocr_lang": "python main.py \"URL\" ./pdfs --ocr --ocr-lang por",
+    "example_language": "python main.py \"URL\" ./downloads --language pt",
+    "more_info": "\nFor more information, see: requirements_and_setup.md"
+  },
+
+  "banner": {
+    "starting": "Starting",
+    "ocr_enabled": "OCR ENABLED",
+    "ocr_languages": "Languages: {langs}",
+    "ocr_note": "View-only PDFs will be processed with text recognition",
+    "ocr_warning": "⚠ This will make download slower but PDFs will be searchable",
+    "ocr_active": "OCR Active"
+  },
+
+  "legal": {
+    "title": "Legal Responsibility",
+    "important": "IMPORTANT LEGAL WARNING",
+    "line1": "This program can download view-only files from Google Drive.",
+    "line2": "This may violate Google's Terms of Service.",
+    "please_use": "Please use this feature only for:",
+    "use1": "Backup of your own files",
+    "use2": "Content you have explicit permission for",
+    "use3": "Educational purposes in controlled environment",
+    "do_not_use": "DO NOT use for:",
+    "dont1": "Piracy of copyrighted content",
+    "dont2": "Copyright violation",
+    "dont3": "Unauthorized download of proprietary material",
+    "disclaimer": "The developers are not responsible for misuse.",
+    "question": "Do you understand and accept the risks? (y/n):",
+    "cancelled": "Download cancelled by user."
+  },
+
+  "validation": {
+    "validating": "Validating input...",
+    "completed": "Validation completed",
+    "error_title": "Validation Error:",
+    "tesseract_not_found": "⚠ Tesseract not found. Install to use OCR:",
+    "tesseract_windows": "  Windows: https://github.com/UB-Mannheim/tesseract/wiki",
+    "tesseract_linux": "  Linux: sudo apt-get install tesseract-ocr",
+    "tesseract_mac": "  Mac: brew install tesseract",
+    "continue_without_ocr": "\nContinue without OCR? (y/n): ",
+    "tesseract_found": "✓ Tesseract OCR found",
+    "pytesseract_not_found": "⚠ pytesseract not installed. Install: pip install pytesseract",
+    "ffmpeg_not_found": "FFmpeg not found",
+    "ffmpeg_note": "FFmpeg is required for view-only videos.",
+    "ffmpeg_warning": "\nView-only videos cannot be downloaded.",
+    "continue_anyway": "\nContinue anyway? (y/n): "
+  },
+
+  "auth": {
+    "authenticating": "Authenticating...",
+    "success": "Authenticated successfully",
+    "error_title": "Authentication Error:",
+    "retry_hint": "Try removing token.json and re-authenticating"
+  },
+
+  "folder": {
+    "checking": "Checking folder...",
+    "name": "Folder:",
+    "error_title": "Error accessing folder:"
+  },
+
+  "mapping": {
+    "mapping": "Mapping files...",
+    "complete": "✓ Mapping completed: {count} files found",
+    "total": "Total files: {count}"
+  },
+
+  "classification": {
+    "title": "File Classification",
+    "standard_downloads": "Standard downloads",
+    "view_only_videos": "View-only videos",
+    "view_only_pdfs": "View-only PDFs",
+    "already_completed": "Already completed",
+    "unsupported": "Unsupported",
+    "status_ok": "✓",
+    "status_ocr": "🔍 OCR",
+    "status_skip": "⏭",
+    "status_none": "⊘"
+  },
+
+  "download": {
+    "starting_standard": "Starting Standard Downloads",
+    "starting_videos": "Starting View-Only Videos",
+    "starting_pdfs": "Starting View-Only PDFs",
+    "workers": "Workers: {workers} | Files: {files}",
+    "workers_videos": "Workers: {workers} | Videos: {videos}",
+    "pdfs_count": "PDFs: {count}",
+    "ocr_active_lang": "🔍 OCR active ({lang}) - PDFs will be searchable",
+    "automatic_processing": "Automatic processing (may be slow)",
+    "scroll_warning": "⚠ Do not use mouse/keyboard during automatic scroll",
+    "completed": "Completed: {success}/{total}",
+    "cancelling": "Cancelling pending downloads...",
+    "interrupted": "Download interrupted",
+    "paused": "Download Paused",
+    "interrupt_detected": "Interrupt detected!",
+    "saving_progress": "Saving progress to resume...",
+    "checkpoint_saved": "Checkpoint saved successfully!",
+    "checkpoint_error": "Error saving checkpoint",
+    "resume_hint": "To resume, run:",
+    "resume_command": "python main.py <URL> <DESTINATION> --resume"
+  },
+
+  "checkpoint": {
+    "found": "Checkpoint Found",
+    "files_downloaded": "Downloaded files",
+    "previous_failures": "Previous failures",
+    "date": "Date",
+    "destination": "Destination",
+    "resume_question": "Do you want to resume the download? (y/n):",
+    "restarting": "Restarting from scratch...",
+    "removed": "Checkpoint removed"
+  },
+
+  "completion": {
+    "success_title": "Success",
+    "success_message": "100% Complete Download!",
+    "success_detail": "All {count} files were downloaded successfully.",
+    "location": "Location: {path}",
+    "partial_title": "Attention",
+    "partial_message": "Download Completed with Failures",
+    "partial_success": "Success: {success}",
+    "partial_failures": "Failures: {failures}",
+    "partial_hint": "Run with --resume to retry failures.",
+    "completed": "Download completed"
+  },
+
+  "stats": {
+    "title": "Final Statistics",
+    "downloaded": "Downloaded files",
+    "failures": "Failures",
+    "total_processed": "Total processed",
+    "unsupported": "Unsupported",
+    "log_available": "Complete log available at: download.log"
+  },
+
+  "errors": {
+    "unexpected": "Unexpected error:",
+    "fatal": "Unhandled fatal error:",
+    "interrupted_by_user": "Program interrupted by user"
+  },
+
+  "ui": {
+    "waiting": "Waiting ({seconds}s)...",
+    "interrupted": "Interrupted: {file}",
+    "cancelled": "Cancelled: {file}",
+    "complete": "Complete: {size:.2f} MB ({pages} pages, {ocr})",
+    "with_ocr": "with OCR",
+    "without_ocr": "without OCR",
+    "document_pages": "Document has {pages} pages",
+    "scroll_warning": "Do not use mouse during scroll (~40s)"
+  },
+
+  "pdf": {
+    "loading": "Loading...",
+    "opening_browser": "Opening browser...",
+    "navigating": "Navigating...",
+    "detecting_pages": "Detecting pages...",
+    "scrolling": "Applying scroll ({pages}p)...",
+    "scrolling_progress": "Scrolling ({loaded}p, iter {iteration})...",
+    "scroll_complete": "Scroll complete ({loaded}p)",
+    "stabilizing": "Waiting for stabilization...",
+    "rescrolling": "Re-scrolling...",
+    "pages_loaded": "{count} pages loaded",
+    "zooming": "Applying zoom...",
+    "extracting": "Extracting images...",
+    "converting": "Converting {count}p to PDF...",
+    "converting_progress": "Converting ({current}/{total}p)...",
+    "applying_ocr": "Applying OCR ({lang})...",
+    "saving": "Saving PDF...",
+    "complete_detail": "Complete ({pages}p, {size:.1f}MB)",
+    "checking": "Checking...",
+    "already_downloaded": "Already downloaded",
+    "failed": "Failed"
+  },
+
+  "ocr": {
+    "using_ocrmypdf": "Using OCRmyPDF (high quality)...",
+    "using_pytesseract": "Using pytesseract + reportlab...",
+    "complete": "OCR completed ({size:.2f} MB)",
+    "processing": "OCR: {current}/{total}"
+  }
+}
