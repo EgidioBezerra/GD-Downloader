@@ -359,6 +359,12 @@ python main.py --help
 
 # Test configuration
 python main.py "TEST_URL" "./test" --dry-run
+
+# Run validation tests
+python scripts/quick_test.py
+
+# Test configuration with functionality tests
+python scripts/test_functionality.py
 ```
 
 ### Validate Environment

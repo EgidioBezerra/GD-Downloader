@@ -40,6 +40,10 @@ cd gd-downloader
 
 ### 2. Install Dependencies
 ```bash
+# Install with test dependencies (recommended)
+pip install -e .[test]
+
+# Or install basic dependencies only
 pip install -r requirements.txt
 ```
 
@@ -50,7 +54,11 @@ playwright install
 
 ### 4. Verify Installation
 ```bash
+# Test basic functionality
 python main.py --help
+
+# Run test suite to verify everything works
+python scripts/quick_test.py
 ```
 
 ---
@@ -176,6 +184,9 @@ Ensure these domains are accessible:
 # Test help output
 python main.py --help
 
+# Run quick validation tests
+python scripts/quick_test.py
+
 # Test with a public folder (small)
 python main.py "https://drive.google.com/drive/folders/1A2b3C4d5E6f7G8h9I0j" ./test_download --language en
 ```
@@ -193,6 +204,21 @@ python main.py "URL_WITH_PDFS" ./test --ocr --only-docs
 
 # Test video download (requires FFmpeg)
 python main.py "URL_WITH_VIDEOS" ./test --only-videos
+
+# Run comprehensive tests
+python scripts/test_functionality.py
+```
+
+### Run Test Suite
+```bash
+# Run all unit tests
+python -m pytest tests/unit/ -v
+
+# Run tests with coverage
+python run_tests.py --unit --coverage
+
+# Run complete test suite
+python run_tests.py --all --verbose
 ```
 
 ---

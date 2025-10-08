@@ -666,16 +666,25 @@ markers =
 python -m pytest
 
 # Run with coverage
-python -m pytest --cov=src --cov-report=html
+python -m pytest --cov=. --cov-report=html
 
 # Run specific test file
-python -m pytest tests/unit/test_auth.py
+python -m pytest tests/unit/test_validators.py
 
 # Run specific test class
-python -m pytest tests/unit/test_auth.py::TestAuthentication
+python -m pytest tests/unit/test_validators.py::TestValidateGoogleDriveURL
 
 # Run specific test method
-python -m pytest tests/unit/test_auth.py::TestAuthentication::test_load_existing_token
+python -m pytest tests/unit/test_validators.py::TestValidateGoogleDriveURL::test_validate_google_drive_url_cases
+
+# Run quick validation script
+python scripts/quick_test.py
+
+# Run comprehensive functionality tests
+python scripts/test_functionality.py
+
+# Run using main test runner
+python run_tests.py --all --coverage
 ```
 
 ### Filtering Tests
@@ -685,6 +694,7 @@ python -m pytest -m unit          # Only unit tests
 python -m pytest -m integration   # Only integration tests
 python -m pytest -m "not slow"    # Skip slow tests
 python -m pytest -m "network"     # Only tests requiring network
+python -m pytest -m "critical"    # Only critical tests
 
 # Run by keyword
 python -m pytest -k "authentication"
@@ -693,6 +703,11 @@ python -m pytest -k "download and not slow"
 # Parallel execution
 python -m pytest -n auto  # Use all available CPUs
 python -m pytest -n 4     # Use 4 processes
+
+# Run specific categories using test runner
+python run_tests.py --unit --verbose
+python run_tests.py --integration --coverage
+python run_tests.py --e2e --timeout=600
 ```
 
 ### Test Options
@@ -714,6 +729,12 @@ python -m pytest --random-order
 
 # Generate benchmark reports
 python -m pytest --benchmark-only
+
+# Run with timeouts
+python -m pytest --timeout=300
+
+# Run with custom markers
+python -m pytest -m "critical and not slow"
 ```
 
 ### Continuous Testing
@@ -724,6 +745,27 @@ ptw tests/ --runner "python -m pytest"
 
 # Or with entr (Linux/macOS)
 ls -d tests/** | entr -r python -m pytest
+
+# Use test runner for development workflow
+python run_tests.py --unit --verbose --watch
+```
+
+### GD-Downloader Specific Test Commands
+```bash
+# Quick validation for development
+python scripts/quick_test.py
+
+# Test specific modules
+python -m pytest tests/unit/test_validators.py tests/unit/test_errors.py -v
+
+# Test with coverage requirements
+python run_tests.py --unit --coverage --fail-under=85
+
+# Run all tests with comprehensive reporting
+python run_tests.py --all --coverage --html-report --verbose
+
+# Run tests in CI mode
+python run_tests.py --all --coverage --ci --quiet
 ```
 
 ---

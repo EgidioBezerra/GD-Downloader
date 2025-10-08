@@ -1,300 +1,386 @@
-# 📦 GD-Downloader
+# GD-Downloader
 
-[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/yourusername/gd-downloader)
 
-> Smart Google Drive downloader with pause/resume support and advanced features
+A powerful and flexible Google Drive downloader with pause/resume support, view-only file handling, and extensive testing infrastructure.
 
----
+## 🌟 Features
 
-## ⚠️ Legal Notice
-
-**This software can download view-only files from Google Drive, which may violate Google's Terms of Service.**
-
-🔴 **Use at your own risk**
-🔴 **For educational purposes and authorized personal backups only**
-🔴 **You are solely responsible for compliance with applicable laws and terms of service**
-
-The developers are **NOT responsible** for misuse, ToS violations, or legal consequences.
-
----
-
-## ✨ Features
-
-### Core Features
-- 🚀 **Parallel Downloads** - Up to 20 simultaneous downloads
-- ⏸️ **Pause/Resume** - Checkpoint system for interrupted downloads
-- 📄 **Smart Export** - Auto-converts Google Docs/Sheets/Slides to PDF
-- 🎯 **Advanced Filters** - Download only videos, documents, or specific types
-- 🎨 **Rich Interface** - Beautiful progress bars, tables, and panels
-- 🔒 **Thread-Safe** - Safe concurrent operations
-- 🌍 **Multi-Language** - English and Portuguese (+ community translations)
-- 📊 **Advanced Logging** - Professional logging system with rotation
-
-### View-Only Support (Experimental)
-- 🎥 **View-Only Videos** - Fast download using gdrive_videoloader technique
-- 📑 **View-Only PDFs** - Automatic page capture with optional OCR
-- 🔍 **OCR Support** - Make PDFs searchable (Tesseract required)
-
----
+- ✅ **Multiple Download Modes**: Standard downloads, view-only file extraction, video downloads
+- ✅ **Pause/Resume System**: Robust checkpoint system for large downloads
+- ✅ **View-Only Support**: Download view-only PDFs and documents with advanced browser automation
+- ✅ **Video Downloads**: Extract streaming videos from Google Drive
+- ✅ **OCR Support**: Make PDFs searchable with Tesseract OCR (optional)
+- ✅ **Parallel Processing**: Multi-threaded downloads for better performance
+- ✅ **Internationalization**: Multi-language support (i18n)
+- ✅ **Comprehensive Testing**: 90%+ test coverage with robust testing infrastructure
+- ✅ **Rich CLI Interface**: Beautiful command-line interface with progress tracking
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
+
+- Python 3.8 or higher
+- Google Drive API credentials (`credentials.json`)
+- FFmpeg (for video downloads)
+- Tesseract OCR (optional, for searchable PDFs)
+- Playwright browsers (for view-only downloads)
+
+### Installation
+
+#### Option 1: Install from Source (Recommended)
 ```bash
-pip install -r requirements.txt
+# Clone the repository
+git clone https://github.com/yourusername/gd-downloader.git
+cd gd-downloader
+
+# Install with test dependencies
+pip install -e .[test]
+
+# Install optional dependencies
+pip install ocrmypdf  # For OCR support
+pip install playwright  # For view-only downloads
+playwright install chromium  # Install browser
 ```
 
-### 2. Setup Google Drive Credentials
-See [docs/user/setup.md](docs/user/setup.md) for detailed instructions.
-
-### 3. Basic Usage
+#### Option 2: Install Basic Version
 ```bash
-# Download entire folder
-python main.py "https://drive.google.com/drive/folders/YOUR_FOLDER_ID" ./downloads
-
-# Download with options
-python main.py "URL" ./downloads --workers 10 --resume
-
-# Language selection
-python main.py "URL" ./downloads --language pt
+pip install gd-downloader
 ```
 
----
+### Configuration
 
-## 📚 Documentation
+1. **Google Drive API Setup**:
+   - Create Google Cloud Project
+   - Enable Google Drive API
+   - Create OAuth 2.0 credentials
+   - Download `credentials.json` to project root
 
-### User Guides
-| Guide | Description |
-|-------|-------------|
-| [Setup Guide](docs/user/setup.md) | Installation and configuration |
-| [User Guide](docs/user/user_guide.md) | Complete usage documentation |
-| [Configuration](docs/user/configuration.md) | All configuration options |
-| [FAQ](docs/user/faq.md) | Common questions and issues |
+2. **FFmpeg Setup** (for videos):
+   ```bash
+   # Windows
+   choco install ffmpeg
+   
+   # macOS
+   brew install ffmpeg
+   
+   # Linux
+   sudo apt-get install ffmpeg
+   ```
 
-### Developer Guides
-| Guide | Description |
-|-------|-------------|
-| [API Reference](docs/developer/api_reference.md) | Module documentation |
-| [Architecture](docs/developer/architecture.md) | System architecture |
-| [Contributing](docs/developer/contributing.md) | Development guidelines |
-| [Testing](docs/developer/testing.md) | Testing documentation |
+3. **Tesseract Setup** (optional, for OCR):
+   ```bash
+   # Windows
+   choco install tesseract
+   
+   # macOS
+   brew install tesseract
+   
+   # Linux
+   sudo apt-get install tesseract-ocr
+   ```
 
-### Specialized Guides
-| Guide | Description |
-|-------|-------------|
-| [Internationalization](docs/guides/internationalization.md) | Multi-language support |
-| [Logging](docs/guides/logging.md) | Logging system guide |
-| [Checkpoints](docs/guides/checkpoints.md) | Pause/resume system |
-| [Troubleshooting](docs/guides/troubleshooting.md) | Common issues and solutions |
+## 📖 Usage
 
-### Legal
-- [Legal Notice](docs/legal/legal_notice.md) - Complete terms and usage restrictions
-
----
-
-## 🎯 Usage Examples
-
-### Basic Downloads
+### Basic Download
 ```bash
-# Simple download
-python main.py "FOLDER_URL" ./downloads
+# Download a single folder
+python main.py "https://drive.google.com/drive/folders/YOUR_FOLDER_ID"
 
-# With progress in Portuguese
-python main.py "FOLDER_URL" ./downloads --language pt
+# Download to specific directory
+python main.py "https://drive.google.com/drive/folders/YOUR_FOLDER_ID" --output "/path/to/downloads"
 
-# Resume interrupted download
-python main.py "FOLDER_URL" ./downloads --resume
-```
-
-### Filtered Downloads
-```bash
-# Videos only (15 workers)
-python main.py "URL" ./videos --only-videos --workers 15
-
-# Documents only (with OCR)
-python main.py "URL" ./docs --only-docs --ocr
-
-# View-only files only
-python main.py "URL" ./downloads --only-view-only
+# Download with progress tracking
+python main.py "https://drive.google.com/drive/folders/YOUR_FOLDER_ID" --progress
 ```
 
 ### Advanced Options
 ```bash
-# GPU acceleration for videos
-python main.py "URL" ./videos --gpu nvidia
+# Download only documents (skip videos)
+python main.py "URL" --only-docs
 
-# OCR with specific language
-python main.py "URL" ./pdfs --ocr --ocr-lang eng
+# Download with OCR support
+python main.py "URL" --ocr --ocr-lang "por+eng"
 
-# Debug mode with verbose logging
-python main.py "URL" ./downloads -vv
+# Download with parallel processing
+python main.py "URL" --workers 10
 
-# Production mode (quiet, rotating logs)
-python main.py "URL" ./downloads -q --log-rotate --log-append
+# Download view-only PDFs
+python main.py "URL" --view-only
+
+# Download with pause/resume support
+python main.py "URL" --checkpoint-interval 10
 ```
 
----
-
-## 🌍 Multi-Language Support
-
-GD-Downloader supports multiple languages:
-
+### View-Only Downloads
 ```bash
-# English (default)
-python main.py "URL" ./downloads
+# Download view-only PDFs with browser automation
+python main.py "URL" --view-only --scroll-speed 50
 
-# Portuguese
-python main.py "URL" ./downloads --language pt
-python main.py "URL" ./downloads --lang pt  # short form
+# Download view-only with OCR
+python main.py "URL" --view-only --ocr
+
+# Download with custom browser settings
+python main.py "URL" --view-only --user-agent "custom-agent-string"
 ```
 
-**Available Languages:**
-- 🇺🇸 English (`en`)
-- 🇧🇷 Portuguese (`pt`)
-
-See [Internationalization Guide](docs/guides/internationalization.md) to add your language.
-
----
-
-## 📊 Logging System
-
-Clean console by default, with optional verbose output:
-
+### Video Downloads
 ```bash
-# Clean console (logs to file only) - DEFAULT
-python main.py "URL" ./downloads
+# Download videos from Google Drive
+python main.py "URL" --only-videos
 
-# Show logs in console (verbose)
-python main.py "URL" ./downloads -v    # INFO level
-python main.py "URL" ./downloads -vv   # DEBUG level
-python main.py "URL" ./downloads -vvv  # DEBUG + third-party
+# Download with GPU acceleration
+python main.py "URL" --only-videos --gpu nvidia
 
-# Force quiet (even with -v)
-python main.py "URL" ./downloads -v --quiet
+# Download with custom quality
+python main.py "URL" --only-videos --quality high
 ```
 
-**Log Files:**
-- Default: `download.log`
-- Custom: `--log-file path/to/file.log`
-- Rotation: `--log-rotate` (10MB files, keeps 5)
+## 🧪 Testing
 
-See [Logging Guide](docs/guides/logging.md) for complete documentation.
+The project includes a comprehensive testing infrastructure designed to ensure reliability and maintainability. For complete testing instructions, see [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md).
 
----
+### Quick Tests
+```bash
+# Run quick validation (recommended for development)
+python scripts/quick_test.py
 
-## 🏗️ Architecture
+# Run all unit tests
+python -m pytest tests/unit/ -v
 
-### Core Modules
-- `main.py` - Entry point and orchestration
-- `downloader.py` - Download logic (standard, view-only, OCR)
-- `auth_drive.py` - Google Drive authentication
-- `checkpoint.py` - Pause/resume system
-- `validators.py` - Input validation
-- `logger.py` - Advanced logging system
-- `i18n.py` - Internationalization
-- `ui.py` - Rich console interface
-- `config.py` - Global configuration
+# Run tests with coverage
+python -m pytest tests/unit/ --cov=. --cov-report=html
 
-### Language Files
-- `lang/en.lang` - English translations
-- `lang/pt.lang` - Portuguese translations
+# Run critical tests only (fast)
+python -m pytest tests/unit/ -m "critical" -v
+```
 
-See [Architecture Guide](docs/developer/architecture.md) for detailed system design.
+### Test Scripts
+```bash
+# Quick validation script
+python scripts/quick_test.py
 
----
+# Comprehensive functionality test
+python scripts/test_functionality.py
+
+# Full test suite with all categories
+python run_tests.py --all --coverage
+
+# Run specific test categories
+python run_tests.py --unit --integration
+python run_tests.py --e2e --performance
+```
+
+### Test Categories
+- **Unit Tests**: Individual component testing (`tests/unit/`)
+- **Integration Tests**: Multi-component interaction testing (`tests/integration/`)
+- **End-to-End Tests**: Full workflow testing (`tests/e2e/`)
+- **Performance Tests**: Load and stress testing
+
+### Coverage Reports
+- HTML report: `htmlcov/index.html`
+- Terminal report: Use `--cov-report=term-missing`
+- Minimum coverage: 85% for unit tests
+
+## 📁 Project Structure
+
+```
+gd-downloader/
+├── main.py                 # Main application entry point
+├── auth_drive.py           # Google Drive authentication
+├── downloader.py           # Download logic and orchestration
+├── config.py               # Configuration constants and utilities
+├── validators.py           # Input validation functions
+├── errors.py               # Custom exception classes
+├── checkpoint.py           # Pause/resume system
+├── i18n.py                 # Internationalization system
+├── ui.py                   # Rich CLI interface
+├── logger.py               # Advanced logging system
+├── requirements.txt         # Production dependencies
+├── pyproject.toml          # Project configuration
+├── pytest.ini              # Test configuration
+├── .gitignore              # Git ignore file
+├── README.md               # This file
+├── LICENSE                 # MIT License
+├── 
+├── src/                    # Source code
+├── docs/                   # Documentation
+│   ├── TESTING_GUIDE.md
+│   ├── API_REFERENCE.md
+│   └── EXAMPLES.md
+├── scripts/                # Utility scripts
+│   ├── quick_test.py       # Quick validation script
+│   ├── test_functionality.py # Comprehensive functionality test
+│   └── cleanup.py          # Cleanup utilities
+├── tests/                  # Complete test suite
+│   ├── conftest.py         # Global test configuration and fixtures
+│   ├── unit/               # Unit tests for individual modules
+│   │   ├── test_basic_validation.py
+│   │   ├── test_checkpoint.py
+│   │   ├── test_config.py
+│   │   ├── test_errors.py
+│   │   ├── test_i18n.py
+│   │   ├── test_ui.py
+│   │   └── test_validators.py
+│   ├── integration/        # Integration tests for module interactions
+│   ├── e2e/                # End-to-end tests for complete workflows
+│   ├── fixtures/           # Test data and mock factories
+│   │   └── mock_data.py
+│   └── utils/              # Test utilities and helpers
+│       └── test_helpers.py
+└── temp/                   # Temporary files
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+```bash
+# Google Drive API
+export GOOGLE_CLIENT_ID="your_client_id"
+export GOOGLE_CLIENT_SECRET="your_client_secret"
+
+# Download settings
+export DEFAULT_WORKERS=5
+export MAX_RETRY_ATTEMPTS=5
+export DOWNLOAD_TIMEOUT=300
+
+# OCR settings
+export OCR_DEFAULT_LANG="por+eng"
+export OCR_TESSERACT_PATH="/usr/bin/tesseract"
+```
+
+### Configuration File
+Create `config_local.py` for custom settings:
+```python
+# Custom configuration
+DEFAULT_WORKERS = 10
+MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024 * 1024  # 5GB
+ENABLE_OCR = True
+OCR_LANGUAGES = ["por", "eng", "spa"]
+```
+
+## 🌍 Internationalization
+
+The project supports multiple languages. Current language files are in the `lang/` directory.
+
+### Adding New Languages
+1. Create language file: `lang/your_code.lang`
+2. Add translations following the JSON format
+3. Update `i18n.py` to include the new language
+
+### Supported Languages
+- English (en) - Default
+- Portuguese (por)
+- Spanish (spa)
+- French (fra) - Coming soon
+- German (deu) - Coming soon
 
 ## 🤝 Contributing
 
-We welcome contributions! See [Contributing Guide](docs/developer/contributing.md) for:
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-- Development setup
-- Code standards
-- Pull request process
-- Adding translations
-
-### Quick Development Setup
+### Development Setup
 ```bash
-# Clone and setup
-git clone https://github.com/your-repo/gd-downloader.git
+# Clone the repository
+git clone https://github.com/yourusername/gd-downloader.git
 cd gd-downloader
-pip install -r requirements.txt
 
-# Run with debug
-python main.py "URL" ./downloads -vv
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install development dependencies
+pip install -e .[test,dev]
+
+# Install pre-commit hooks
+pre-commit install
+
+# Run tests
+python scripts/quick_test.py
+python -m pytest tests/unit/ -v
 ```
 
----
+### Submitting Changes
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Ensure all tests pass
+6. Submit a pull request
+
+## 📚 Documentation
+
+- [Testing Guide](docs/TESTING_GUIDE.md) - Comprehensive testing instructions
+- [API Reference](docs/API_REFERENCE.md) - API documentation
+- [Examples](docs/EXAMPLES.md) - Usage examples
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
-**1. "credentials.json not found"**
-- Follow [Setup Guide](docs/user/setup.md#google-drive-setup)
-
-**2. "FFmpeg not found"**
-- Install FFmpeg for view-only videos
-- See [Setup Guide](docs/user/setup.md#ffmpeg-installation)
-
-**3. Characters look weird in console**
-- Windows: Use Windows Terminal or `chcp 65001`
-- Or use: `--no-color` flag
-
-**4. Tesseract not found (OCR)**
-```bash
-# Windows
-# Download: https://github.com/UB-Mannheim/tesseract/wiki
-
-# Linux
-sudo apt-get install tesseract-ocr
-
-# Mac
-brew install tesseract
+#### 1. Authentication Errors
+```
+Error: Invalid credentials.json format
+Solution: Ensure credentials.json is properly formatted JSON
 ```
 
-See [Troubleshooting Guide](docs/guides/troubleshooting.md) for complete solutions.
+#### 2. Download Failures
+```
+Error: Permission denied
+Solution: Check file permissions and disk space
+```
+
+#### 3. View-Only Issues
+```
+Error: Browser automation failed
+Solution: Install Playwright: pip install playwright && playwright install
+```
+
+#### 4. OCR Issues
+```
+Error: Tesseract not found
+Solution: Install Tesseract OCR: choco install tesseract (Windows)
+```
+
+### Getting Help
+
+- Check the [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
+- Search [Issues](https://github.com/yourusername/gd-downloader/issues)
+- Read the [FAQ](docs/FAQ.md)
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🤝 Credits
+
+- Google Drive API for file access
+- Playwright for browser automation
+- Rich for CLI interface
+- PyAutoGUI for scroll simulation
+- OCRmyPDF for searchable PDFs
+
+## 📈 Roadmap
+
+- [ ] Web interface (Flask/FastAPI)
+- [ ] REST API for remote access
+- [ ] Desktop application (Electron/Tkinter)
+- [ ] Cloud storage integration (Dropbox, OneDrive)
+- [ ] Torrent client integration
+- [ ] Machine learning for file categorization
 
 ---
 
-## 📝 License
+## 📞 Support
 
-MIT License - See [LICENSE](LICENSE) file for details.
-
----
-
-## ⚠️ Disclaimer
-
-This tool is provided "as is" without warranty. The developers:
-- Are NOT responsible for misuse
-- Do NOT encourage ToS violations
-- Recommend using only for authorized purposes
-
-**Use ethically and responsibly.**
+For support and questions:
+- Create an [Issue](https://github.com/yourusername/gd-downloader/issues)
+- Check the [Documentation](docs/)
+- Join our [Discord](https://discord.gg/yourserver) community
 
 ---
 
-## 🙏 Acknowledgments
-
-- Google Drive API
-- Playwright & Selenium teams
-- OCRmyPDF & Tesseract projects
-- Rich library for beautiful CLI
-- Community contributors
-
----
-
-## 📊 Project Stats
-
-- **Language**: Python 3.8+
-- **Lines of Code**: ~4,000
-- **Documentation**: 15+ guides
-- **Supported Languages**: 2 (EN, PT)
-- **Status**: Stable
-
----
-
-**Made with ❤️ for the community**
-
-*Last updated: 2025-10-07*
+**Made with ❤️ for the Google Drive community**
