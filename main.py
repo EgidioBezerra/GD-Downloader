@@ -989,13 +989,14 @@ def main():
                     total=len(parallel_tasks)
                 )
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                    # ✅ Sistema produtor-consumidor
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix="download-worker") as executor:
+                    # ✅ Sistema produtor-consumidor com melhorias
                     from queue import Queue
                     import threading
+                    import time
 
                     # Fila de worker task IDs disponíveis
-                    available_workers = Queue()
+                    available_workers = Queue(maxsize=workers)
                     for tid in worker_tasks:
                         available_workers.put(tid)
 
@@ -1006,13 +1007,14 @@ def main():
 
                     futures = {}
                     results = []
+                    shutdown_requested = False
 
                     # Lock para controle de submissões
                     submit_lock = threading.Lock()
 
                     def submit_next_task():
                         """Submete próxima tarefa se houver worker disponível."""
-                        if pending_tasks.empty():
+                        if shutdown_requested or pending_tasks.empty():
                             return False
 
                         try:
@@ -1020,7 +1022,7 @@ def main():
                             tid = available_workers.get(timeout=0.1)
                             task = pending_tasks.get(timeout=0.1)
 
-                            # Submete
+                            # Submete com timeout para evitar hanging workers
                             future = executor.submit(
                                 download_worker,
                                 task, creds, completed_files, failed_files,
@@ -1032,24 +1034,29 @@ def main():
 
                             return True
 
-                        except:
+                        except Exception as e:
+                            logging.debug(f"Erro ao submeter tarefa: {e}")
                             return False
 
                     # Submete tarefas iniciais (até workers)
-                    for _ in range(min(workers, len(parallel_tasks))):
-                        submit_next_task()
+                    initial_tasks = min(workers, len(parallel_tasks))
+                    for _ in range(initial_tasks):
+                        if not submit_next_task():
+                            break
 
                     try:
-                        # ✅ Loop com timeout para permitir verificação de interrupted
-                        while len(results) < len(parallel_tasks):
+                        # ✅ Loop com timeout e shutdown gracial
+                        while len(results) < len(parallel_tasks) and not shutdown_requested:
                             # Verifica flag de interrupção
                             if interrupted:
-                                raise KeyboardInterrupt
+                                logging.info("Interrupção detectada, iniciando shutdown gracial...")
+                                shutdown_requested = True
+                                break
 
-                            # Aguarda com timeout de 0.5s
+                            # Aguarda com timeout menor para melhor responsividade
                             done, pending_futures = concurrent.futures.wait(
                                 futures.keys(),
-                                timeout=0.5,
+                                timeout=0.3,  # Reduzido para 300ms
                                 return_when=concurrent.futures.FIRST_COMPLETED
                             )
 
@@ -1059,7 +1066,7 @@ def main():
                                     task, tid = futures.pop(future)
 
                                 try:
-                                    result = future.result()
+                                    result = future.result(timeout=30)  # Timeout de 30s por tarefa
                                     results.append(result)
                                     progress.update(global_task, advance=1)
 
@@ -1076,6 +1083,13 @@ def main():
                                             failed_files, current_destination_path
                                         )
 
+                                except concurrent.futures.TimeoutError:
+                                    logging.error(f"Timeout na tarefa: {task['file_info']['name']}")
+                                    failed_files.add(f"{task['file_info']['id']}_{task['file_info']['name']}")
+                                    if progress_mgr and task_id is not None:
+                                        progress.update(tid, description="[red]✗ Timeout[/red]", completed=0)
+                                    available_workers.put(tid)
+                                    submit_next_task()
                                 except Exception as e:
                                     logging.error(f"Erro ao processar resultado: {e}")
                                     results.append(False)
@@ -1084,12 +1098,19 @@ def main():
                                     submit_next_task()
 
                     except KeyboardInterrupt:
-                        console.print("\n[yellow]Cancelando downloads pendentes...[/yellow]")
-                        # Cancela futures pendentes
+                        shutdown_requested = True
+                        logging.info("Cancelando downloads pendentes...")
+                        
+                        # Cancela futures pendentes com timeout
                         for future in futures:
                             future.cancel()
-                        # Aguarda cleanup
-                        concurrent.futures.wait(futures.keys(), timeout=5)
+                        
+                        # Aguarda cleanup com timeout
+                        try:
+                            concurrent.futures.wait(futures.keys(), timeout=5)
+                        except Exception:
+                            pass
+                        
                         raise
 
                 # Salva checkpoint final

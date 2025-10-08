@@ -4,6 +4,11 @@ Configurações globais e constantes do GD-Downloader.
 Centraliza valores de configuração usados em todo o projeto.
 """
 
+import random
+import secrets
+import hashlib
+from typing import List
+
 # ============================================================================
 # WORKERS E CONCORRÊNCIA
 # ============================================================================
@@ -146,6 +151,41 @@ DEFAULT_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
+
+# Lista de User Agents para rotação (melhora detecção de bots)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0"
+]
+
+def get_random_user_agent() -> str:
+    """
+    Retorna um User Agent aleatório para evitar detecção.
+    Usa secrets.choice() para melhor aleatoriedade.
+    """
+    return secrets.choice(USER_AGENTS)
+
+def get_rotating_user_agent(session_id: str = None) -> str:
+    """
+    Retorna um User Agent consistente para uma sessão.
+    
+    Args:
+        session_id: ID da sessão para consistência
+        
+    Returns:
+        User Agent consistente para a sessão
+    """
+    if session_id:
+        # Usa hash do session_id para consistência
+        hash_value = int(hashlib.sha256(session_id.encode()).hexdigest(), 16)
+        index = hash_value % len(USER_AGENTS)
+        return USER_AGENTS[index]
+    else:
+        return get_random_user_agent()
 
 BROWSER_LOCALE = "en-US"
 BROWSER_TIMEZONE = "America/New_York"
