@@ -50,7 +50,7 @@ def validate_google_drive_url(url: str) -> Tuple[bool, Optional[str]]:
 
 def validate_destination_path(path: str, create_if_missing: bool = True) -> Path:
     """
-    Valida e prepara o caminho de destino.
+    Valida e prepara o caminho de destino com segurança aprimorada.
     
     Args:
         path: Caminho de destino
@@ -65,27 +65,107 @@ def validate_destination_path(path: str, create_if_missing: bool = True) -> Path
     if not path:
         raise ValidationError("Caminho de destino não pode ser vazio")
     
+    if not isinstance(path, str):
+        raise ValidationError("Caminho de destino deve ser uma string")
+    
+    # Validação contra path traversal
+    if '..' in path or path.startswith('/') or path.startswith('\\'):
+        if path.startswith('/') and not os.path.isabs(path):
+            # Unix absolute path
+            pass  # Permitir paths absolutos legítimos
+        elif '..' in path:
+            raise ValidationError(
+                "Path traversal detectado: caracteres '..' não permitidos",
+                "Use um caminho relativo seguro ou absoluto"
+            )
+    
     try:
         dest_path = Path(path).resolve()
+        current_dir = Path.cwd().resolve()
+        
+        # Validação de path traversal adicional
+        try:
+            relative_path = dest_path.relative_to(current_dir)
+            # Se chegamos aqui, o path é relativo ao diretório atual
+            if '..' in str(relative_path):
+                raise ValidationError("Path traversal detectado")
+        except ValueError:
+            # Path não é relativo ao diretório atual (path absoluto)
+            # Isso é aceitável, mas vamos validar algumas coisas
+            dangerous_paths = ['/etc', '/bin', '/usr', '/sys', '/proc', '/boot', '/root']
+            for dangerous in dangerous_paths:
+                if str(dest_path).startswith(dangerous):
+                    raise ValidationError(
+                        f"Path perigoso detectado: {dest_path}",
+                        "Este caminho de sistema não deve ser usado para downloads"
+                    )
+        
+        # Validação de comprimento do path (Windows limit)
+        if len(str(dest_path)) > 250:
+            if os.name == 'nt':  # Windows
+                raise ValidationError(
+                    f"Caminho muito longo para Windows: {len(str(dest_path))} caracteres",
+                    "Use um caminho mais curto (máximo 250 caracteres)"
+                )
+            else:
+                logging.warning(f"Caminho muito longo: {len(str(dest_path))} caracteres")
         
         # Verifica se o pai existe
         if not dest_path.parent.exists():
-            raise ValidationError(
-                f"Diretório pai não existe: {dest_path.parent}",
-                "Crie o diretório pai primeiro ou use um caminho válido"
-            )
+            if create_if_missing:
+                try:
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    logging.info(f"Diretório pai criado: {dest_path.parent}")
+                except Exception as e:
+                    raise ValidationError(
+                        f"Não foi possível criar diretório pai: {dest_path.parent}",
+                        str(e)
+                    )
+            else:
+                raise ValidationError(
+                    f"Diretório pai não existe: {dest_path.parent}",
+                    "Crie o diretório pai primeiro ou use create_if_missing=True"
+                )
         
         # Cria o diretório se necessário
         if create_if_missing:
-            dest_path.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Diretório de destino criado/verificado: {dest_path}")
+            try:
+                dest_path.mkdir(parents=True, exist_ok=True)
+                logging.info(f"Diretório de destino criado/verificado: {dest_path}")
+            except Exception as e:
+                raise ValidationError(
+                    f"Não foi possível criar diretório de destino: {dest_path}",
+                    str(e)
+                )
         
         # Verifica permissões de escrita
-        if dest_path.exists() and not os.access(dest_path, os.W_OK):
-            raise ValidationError(
-                f"Sem permissão de escrita em: {dest_path}",
-                "Verifique as permissões do diretório"
-            )
+        if dest_path.exists():
+            # Testa escrita criando um arquivo temporário
+            test_file = dest_path / '.gd_write_test'
+            try:
+                test_file.touch()
+                test_file.unlink()
+            except Exception as e:
+                raise ValidationError(
+                    f"Sem permissão de escrita em: {dest_path}",
+                    str(e)
+                )
+        else:
+            # Verifica permissões do diretório pai
+            if not os.access(dest_path.parent, os.W_OK):
+                raise ValidationError(
+                    f"Sem permissão de escrita no diretório pai: {dest_path.parent}",
+                    "Verifique as permissões do diretório"
+                )
+        
+        # Validação de espaço em disco (básico)
+        try:
+            stat = shutil.disk_usage(dest_path.parent)
+            free_space_gb = stat.free / (1024**3)
+            if free_space_gb < 1:  # Menos de 1GB
+                logging.warning(f"Espaço em disco baixo: {free_space_gb:.2f}GB livres")
+        except Exception:
+            pass  # Ignora erros na verificação de espaço
         
         return dest_path
         
