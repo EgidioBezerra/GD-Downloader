@@ -403,7 +403,7 @@ async def download_view_only_pdf_playwright(service, file_id: str, save_path: st
             try:
                 update_progress("Abrindo navegador...", 10)
                 browser = await _launch_stealth_browser(p)
-                page = await _create_stealth_page(browser)
+                page = await _create_stealth_page(browser, file_id)
 
                 # Navegar para o PDF
                 update_progress("Navegando...", 15)
@@ -530,15 +530,25 @@ async def _launch_stealth_browser(playwright) -> Browser:
     )
 
 
-async def _create_stealth_page(browser: Browser) -> Page:
-    """Cria página com contexto stealth completo."""
+async def _create_stealth_page(browser: Browser, session_id: str = None) -> Page:
+    """Cria página com contexto stealth completo e user agent rotation."""
+    from config import get_rotating_user_agent
+    
+    # Usa user agent consistente para a sessão
+    user_agent = get_rotating_user_agent(session_id or "default_session")
+    
     context = await browser.new_context(
         viewport={'width': 1920, 'height': 1080},
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        user_agent=user_agent,
         locale='en-US',
         timezone_id='America/New_York',
         extra_http_headers={
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
         }
     )
     
@@ -842,9 +852,10 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
 
     update_progress(f"Convertendo {len(data_urls)}p para PDF...", 78)
 
-    # Converte data URLs para PIL Images (otimizado)
+    # Converte data URLs para PIL Images (otimizado com cleanup de memória)
     pil_images = []
     for idx, data_url in enumerate(data_urls):
+        pil_img = None
         try:
             img_b64 = data_url.split(',')[1]
             img_bytes = base64.b64decode(img_b64)
@@ -854,6 +865,7 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
             if pil_img.mode == 'RGBA':
                 rgb_img = Image.new('RGB', pil_img.size, (255, 255, 255))
                 rgb_img.paste(pil_img, mask=pil_img.split()[3])
+                pil_img.close()  # Fechar imagem original
                 pil_img = rgb_img
 
             pil_images.append(pil_img)
@@ -863,7 +875,16 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 # 78% a 85% baseado no progresso
                 progress_percent = 78 + int(((idx + 1) / len(data_urls)) * 7)
                 update_progress(f"Convertendo ({idx + 1}/{len(data_urls)}p)...", progress_percent)
+                
+                # Força garbage collection periodicamente para liberar memória
+                if (idx + 1) % 20 == 0:
+                    import gc
+                    gc.collect()
+                    
         except Exception as e:
+            # Cleanup em caso de erro
+            if pil_img:
+                pil_img.close()
             logging.warning(f"Erro página {idx + 1}: {e}")
 
     if not pil_images:
@@ -904,10 +925,23 @@ async def _extract_blobs_to_pdf(page: Page, file_name: str,
                 resolution=300.0,  # ✅ CORRIGIDO (era 100.0)
                 quality=95          # ✅ ADICIONADO
             )
-
-    update_progress(f"PDF criado ({len(pil_images)}p)", 90)
-
-    return (pdf_buf.getvalue(), len(pil_images))
+    
+    pdf_data = pdf_buf.getvalue()
+    pdf_buf.close()
+    
+    # Cleanup de memória - fecha todas as PIL Images
+    for img in pil_images:
+        try:
+            img.close()
+        except:
+            pass
+    pil_images.clear()
+    
+    # Força garbage collection final
+    import gc
+    gc.collect()
+    
+    return pdf_data, actual_pages
 
 # ============================================================================
 # OCR SUPPORT
@@ -1022,13 +1056,26 @@ def _create_pdf_with_ocr(pil_images: List, ocr_lang: str = "por+eng") -> bytes:
             return pdf_bytes
             
         finally:
-            # Cleanup
+            # Cleanup com memory management
             import os
+            import gc
+            
             try:
                 os.unlink(temp_input.name)
                 os.unlink(temp_output.name)
             except:
                 pass
+            
+            # Cleanup das imagens otimizadas
+            for img in optimized_images:
+                try:
+                    img.close()
+                except:
+                    pass
+            optimized_images.clear()
+            
+            # Força garbage collection
+            gc.collect()
     
     except ImportError:
         logging.info("ocrmypdf não disponível, tentando pytesseract...")
