@@ -4,629 +4,297 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)]()
 
-> Download inteligente de arquivos do Google Drive com sistema de pause/resume
+> Smart Google Drive downloader with pause/resume support and advanced features
 
 ---
 
-## ⚠️ AVISO LEGAL IMPORTANTE
+## ⚠️ Legal Notice
 
-**Este software pode baixar arquivos view-only do Google Drive, o que pode violar os Termos de Serviço do Google.**
+**This software can download view-only files from Google Drive, which may violate Google's Terms of Service.**
 
-🔴 **Use por sua conta e risco**  
-🔴 **Apenas para fins educacionais e backup pessoal autorizado**  
-🔴 **Leia [LEGAL_NOTICE.md](LEGAL_NOTICE.md) antes de usar**
+🔴 **Use at your own risk**
+🔴 **For educational purposes and authorized personal backups only**
+🔴 **You are solely responsible for compliance with applicable laws and terms of service**
 
-Os desenvolvedores **NÃO se responsabilizam** por uso indevido, violação de ToS, ou consequências legais.
-
----
-
-## ✨ Recursos
-
-### ✅ Funcionalidades Principais
-
-- **Download Paralelo**: Até 20 downloads simultâneos
-- **Pause/Resume**: Sistema de checkpoint para retomar downloads interrompidos
-- **Exportação Inteligente**: Converte Google Docs/Sheets/Slides para PDF automaticamente
-- **Filtros Avançados**: Baixe apenas vídeos, documentos, ou tipos específicos
-- **Interface Rica**: Barras de progresso, tabelas e painéis coloridos
-- **Thread-Safe**: Operações seguras em ambientes multi-thread
-
-### ⚠️ Funcionalidades Experimentais
-
-- **Vídeos View-Only**: Download usando técnica gdrive_videoloader (rápido e eficiente)
-- **PDFs View-Only**: Captura automática de páginas
+The developers are **NOT responsible** for misuse, ToS violations, or legal consequences.
 
 ---
 
-## 📋 Pré-requisitos
+## ✨ Features
 
-### Software Necessário
+### Core Features
+- 🚀 **Parallel Downloads** - Up to 20 simultaneous downloads
+- ⏸️ **Pause/Resume** - Checkpoint system for interrupted downloads
+- 📄 **Smart Export** - Auto-converts Google Docs/Sheets/Slides to PDF
+- 🎯 **Advanced Filters** - Download only videos, documents, or specific types
+- 🎨 **Rich Interface** - Beautiful progress bars, tables, and panels
+- 🔒 **Thread-Safe** - Safe concurrent operations
+- 🌍 **Multi-Language** - English and Portuguese (+ community translations)
+- 📊 **Advanced Logging** - Professional logging system with rotation
 
-- **Python 3.8+** ([Download](https://www.python.org/downloads/))
-- **FFmpeg** (para vídeos view-only) ([Instruções de instalação](requirements_and_setup.md#-instala%C3%A7%C3%A3o))
-- **Google Cloud Credentials** ([Como configurar](requirements_and_setup.md#-configurar-credenciais-do-google-drive))
-
-### Sistemas Operacionais Suportados
-
-- ✅ Windows 10/11
-- ✅ Linux (Ubuntu, Debian, Fedora, etc.)
-- ✅ macOS 10.15+
+### View-Only Support (Experimental)
+- 🎥 **View-Only Videos** - Fast download using gdrive_videoloader technique
+- 📑 **View-Only PDFs** - Automatic page capture with optional OCR
+- 🔍 **OCR Support** - Make PDFs searchable (Tesseract required)
 
 ---
 
-## 🚀 Instalação Rápida
+## 🚀 Quick Start
 
-### 1. Clone o Repositório
-
-```bash
-git clone https://github.com/seu-usuario/gd-downloader.git
-cd gd-downloader
-```
-
-### 2. Instale as Dependências
-
+### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure Credenciais
+### 2. Setup Google Drive Credentials
+See [docs/user/setup.md](docs/user/setup.md) for detailed instructions.
 
-1. Acesse [Google Cloud Console](https://console.cloud.google.com/)
-2. Crie um projeto e ative a Google Drive API
-3. Crie credenciais OAuth 2.0 (tipo: Desktop app)
-4. Baixe o arquivo JSON e renomeie para `credentials.json`
-5. Coloque `credentials.json` na pasta do projeto
-
-📖 **Instruções detalhadas**: [requirements_and_setup.md](requirements_and_setup.md#-configurar-credenciais-do-google-drive)
-
-### 4. Instale FFmpeg (Opcional - para vídeos)
-
-**Windows:**
+### 3. Basic Usage
 ```bash
-# Baixe de https://ffmpeg.org/download.html
-# Adicione ao PATH do sistema
-```
+# Download entire folder
+python main.py "https://drive.google.com/drive/folders/YOUR_FOLDER_ID" ./downloads
 
-**Linux:**
-```bash
-sudo apt update && sudo apt install ffmpeg
-```
+# Download with options
+python main.py "URL" ./downloads --workers 10 --resume
 
-**macOS:**
-```bash
-brew install ffmpeg
-```
-
-**Verificar instalação:**
-```bash
-ffmpeg -version
+# Language selection
+python main.py "URL" ./downloads --language pt
 ```
 
 ---
 
-## 📖 Uso Básico
+## 📚 Documentation
 
-### Comando Simples
+### User Guides
+| Guide | Description |
+|-------|-------------|
+| [Setup Guide](docs/user/setup.md) | Installation and configuration |
+| [User Guide](docs/user/user_guide.md) | Complete usage documentation |
+| [Configuration](docs/user/configuration.md) | All configuration options |
+| [FAQ](docs/user/faq.md) | Common questions and issues |
 
-```bash
-python main.py "URL_DA_PASTA" ./downloads
-```
+### Developer Guides
+| Guide | Description |
+|-------|-------------|
+| [API Reference](docs/developer/api_reference.md) | Module documentation |
+| [Architecture](docs/developer/architecture.md) | System architecture |
+| [Contributing](docs/developer/contributing.md) | Development guidelines |
+| [Testing](docs/developer/testing.md) | Testing documentation |
 
-### Primeiro Uso
+### Specialized Guides
+| Guide | Description |
+|-------|-------------|
+| [Internationalization](docs/guides/internationalization.md) | Multi-language support |
+| [Logging](docs/guides/logging.md) | Logging system guide |
+| [Checkpoints](docs/guides/checkpoints.md) | Pause/resume system |
+| [Troubleshooting](docs/guides/troubleshooting.md) | Common issues and solutions |
 
-1. Execute o comando acima
-2. Uma janela do navegador abrirá para autenticação
-3. Faça login com sua conta Google
-4. Autorize o aplicativo
-5. O download começará automaticamente
-
----
-
-## 🎯 Exemplos de Uso
-
-### 1. Download Padrão
-
-```bash
-python main.py "https://drive.google.com/drive/folders/1a2b3c4d5e6f" ./MinhaPasta
-```
-
-**Baixa**: Todos os arquivos com permissão de download  
-**Workers**: 5 (padrão)
-
-### 2. Download Rápido (Mais Workers)
-
-```bash
-python main.py "URL_DA_PASTA" ./downloads --workers 15
-```
-
-**Ideal para**: Muitos arquivos pequenos  
-**Workers**: 15 simultâneos
-
-### 3. Apenas Vídeos
-
-```bash
-python main.py "URL_DA_PASTA" ./Videos --only-videos --workers 10
-```
-
-**Baixa**: Apenas arquivos de vídeo (MP4, AVI, etc.)  
-**Ignora**: Documentos, PDFs, imagens
-
-### 4. Apenas Documentos
-
-```bash
-python main.py "URL_DA_PASTA" ./Documentos --only-docs --workers 8
-```
-
-**Baixa**: PDFs, Google Docs, Sheets, Slides  
-**Ignora**: Vídeos
-
-### 5. Apenas Arquivos View-Only
-
-```bash
-python main.py "URL_DA_PASTA" ./ViewOnly --only-view-only --workers 20
-```
-
-**Baixa**: Apenas arquivos sem permissão de download  
-⚠️ **Atenção**: Pode violar ToS do Google Drive
-
-### 6. Combinar Filtros: Apenas Vídeos View-Only
-
-```bash
-python main.py "URL_DA_PASTA" ./VideoAulas --only-videos --only-view-only --workers 15
-```
-
-**Baixa**: Apenas vídeos que são view-only  
-**Ignora**: Vídeos com download normal, documentos
-
-### 7. Download com Aceleração GPU
-
-```bash
-python main.py "URL_DA_PASTA" ./downloads --gpu nvidia --workers 10
-```
-
-**Opções de GPU**:
-- `--gpu nvidia` (NVENC)
-- `--gpu intel` (Quick Sync)
-- `--gpu amd` (VCE)
-
-### 8. Retomar Download Pausado
-
-```bash
-# Pause com Ctrl+C durante o download
-# Depois execute:
-python main.py "MESMA_URL" ./MESMO_DESTINO --resume
-```
-
-**Pula**: Arquivos já baixados  
-**Retenta**: Arquivos que falharam
-
-### 9. Recomeçar do Zero
-
-```bash
-python main.py "URL_DA_PASTA" ./downloads --clear-checkpoint
-```
-
-**Remove**: Checkpoint anterior  
-**Baixa**: Tudo novamente
+### Legal
+- [Legal Notice](docs/legal/legal_notice.md) - Complete terms and usage restrictions
 
 ---
 
-## 🎨 Interface Visual
+## 🎯 Usage Examples
 
-### Exemplo de Saída
+### Basic Downloads
+```bash
+# Simple download
+python main.py "FOLDER_URL" ./downloads
 
+# With progress in Portuguese
+python main.py "FOLDER_URL" ./downloads --language pt
+
+# Resume interrupted download
+python main.py "FOLDER_URL" ./downloads --resume
 ```
-╭──────────── Google Drive Downloader ────────────╮
-│  📦 Google Drive Downloader                     │
-│  Download inteligente com pause/resume          │
-│  Versão 2.0 - Melhorada e Segura               │
-╰─────────────────────────────────────────────────╯
 
-⚠️  AVISO LEGAL IMPORTANTE
-...
+### Filtered Downloads
+```bash
+# Videos only (15 workers)
+python main.py "URL" ./videos --only-videos --workers 15
 
-🔍 Validando entrada...
-✓ Validação concluída
+# Documents only (with OCR)
+python main.py "URL" ./docs --only-docs --ocr
 
-🔐 Autenticando...
-✓ Autenticado com sucesso
+# View-only files only
+python main.py "URL" ./downloads --only-view-only
+```
 
-📁 Verificando pasta...
-✓ Pasta: Curso Completo de Python
+### Advanced Options
+```bash
+# GPU acceleration for videos
+python main.py "URL" ./videos --gpu nvidia
 
-🔍 Mapeando arquivos...
-✓ Mapeamento concluído: 150 arquivos encontrados
+# OCR with specific language
+python main.py "URL" ./pdfs --ocr --ocr-lang eng
 
-┌─────── Classificação dos Arquivos ───────┐
-│ Tipo              │ Quantidade │ Status  │
-├───────────────────┼────────────┼─────────┤
-│ Downloads padrão  │     80     │    ✓    │
-│ Vídeos view-only  │     50     │    ✓    │
-│ PDFs view-only    │     10     │    ✓    │
-│ Já completados    │      0     │    ⊙    │
-│ Não suportados    │     10     │    ⊗    │
-└───────────────────┴────────────┴─────────┘
+# Debug mode with verbose logging
+python main.py "URL" ./downloads -vv
 
-🔽 Iniciando Downloads Padrão
-Workers: 10 | Arquivos: 80
-⠋ Baixando... ████████████████ 100% • 0:00:00
-✓ Concluídos: 80/80
-
-🎬 Iniciando Vídeos View-Only
-Workers: 10 | Vídeos: 50
-⠋ Baixando vídeos... ████████████ 75% • 0:05:30
+# Production mode (quiet, rotating logs)
+python main.py "URL" ./downloads -q --log-rotate --log-append
 ```
 
 ---
 
-## 📊 Flags e Parâmetros
+## 🌍 Multi-Language Support
 
-### Parâmetros Obrigatórios
-
-| Parâmetro | Descrição | Exemplo |
-|-----------|-----------|---------|
-| `folder_url` | URL da pasta do Google Drive | `"https://drive.google.com/..."` |
-| `destination` | Caminho local de destino | `./downloads` |
-
-### Parâmetros Opcionais
-
-| Flag | Tipo | Padrão | Descrição |
-|------|------|--------|-----------|
-| `--workers` | int | 5 | Downloads simultâneos (1-20) |
-| `--gpu` | string | None | Aceleração GPU: nvidia/intel/amd |
-| `--only-view-only` | bool | False | Apenas arquivos view-only |
-| `--only-videos` | bool | False | Apenas vídeos |
-| `--only-docs` | bool | False | Apenas documentos |
-| `--resume` | bool | False | Retoma download anterior |
-| `--clear-checkpoint` | bool | False | Remove checkpoint |
-| `--debug-html` | bool | False | Salva HTML para debug |
-| `--no-legal-warning` | bool | False | Suprime aviso legal |
-
-### Combinações de Filtros
-
-| --only-videos | --only-docs | --only-view-only | Resultado |
-|---------------|-------------|------------------|-----------|
-| ❌ | ❌ | ❌ | **Tudo** |
-| ✅ | ❌ | ❌ | Todos os vídeos |
-| ❌ | ✅ | ❌ | Todos os documentos |
-| ❌ | ❌ | ✅ | View-only (vídeos+docs) |
-| ✅ | ❌ | ✅ | **Vídeos view-only** |
-| ❌ | ✅ | ✅ | **Documentos view-only** |
-
----
-
-## 🔧 Sistema de Checkpoint
-
-### Como Funciona
-
-1. **Auto-save**: A cada 10 arquivos (padrão) ou 5 vídeos
-2. **Ctrl+C Seguro**: Salva progresso antes de sair
-3. **Resume Inteligente**: Pula arquivos já baixados
-4. **Retry Automático**: Retenta arquivos que falharam
-
-### Arquivos de Checkpoint
-
-```
-.checkpoints/
-└── checkpoint_a1b2c3d4e5f6.json
-```
-
-### Exemplo de Uso
+GD-Downloader supports multiple languages:
 
 ```bash
-# 1. Inicia download
-python main.py "URL" ./downloads --workers 10
-
-# 2. Pressiona Ctrl+C para pausar
-# Download pausado! Checkpoint salvo.
-
-# 3. Retoma mais tarde (pode ser dias depois)
-python main.py "URL" ./downloads --resume
-
-# Checkpoint encontrado!
-# Arquivos já baixados: 45
-# Deseja retomar? (s/n): s
-```
-
----
-
-## 📁 Estrutura de Arquivos
-
-```
-gd-downloader/
-├── auth_drive.py          # Autenticação Google Drive
-├── checkpoint.py          # Sistema de checkpoints
-├── downloader.py          # Lógica de download
-├── errors.py              # Exceções personalizadas
-├── validators.py          # Validação de entrada
-├── main.py                # Programa principal
-├── requirements.txt       # Dependências Python
-├── credentials.json       # Suas credenciais (não commitar!)
-├── token.json            # Token OAuth (gerado automaticamente)
-├── download.log          # Log detalhado
-├── .checkpoints/         # Checkpoints (auto-criado)
-├── README.md             # Este arquivo
-├── LEGAL_NOTICE.md       # Aviso legal importante
-└── requirements_and_setup.md  # Guia de instalação
-```
-
----
-
-## 🎓 Casos de Uso Práticos
-
-### Backup de Curso Online
-
-```bash
-# 1. Baixa vídeos view-only (aulas)
-python main.py "URL_CURSO" ./Curso/Videos \
-  --only-videos --only-view-only --workers 15
-
-# 2. Baixa material de apoio
-python main.py "URL_CURSO" ./Curso/Material \
-  --only-docs --workers 8
-```
-
-### Download Seletivo
-
-```bash
-# Apenas PDFs
-python main.py "URL" ./PDFs \
-  --only-docs --workers 5
-
-# Apenas vídeos com download normal
-python main.py "URL" ./Videos \
-  --only-videos --workers 10
-```
-
-### Download com Retry Automático
-
-```bash
-# Script bash para retry automático
-while true; do
-    python main.py "URL" ./downloads --workers 10 --resume
-    if [ $? -eq 0 ]; then break; fi
-    echo "Tentando novamente em 60s..."
-    sleep 60
-done
-```
-
----
-
-## 🛠️ Troubleshooting
-
-### Erro: "Credenciais inválidas"
-
-**Solução:**
-```bash
-rm token.json
+# English (default)
 python main.py "URL" ./downloads
-# Fará novo login
+
+# Portuguese
+python main.py "URL" ./downloads --language pt
+python main.py "URL" ./downloads --lang pt  # short form
 ```
 
-### Erro: "FFmpeg não encontrado"
+**Available Languages:**
+- 🇺🇸 English (`en`)
+- 🇧🇷 Portuguese (`pt`)
 
-**Solução:**
+See [Internationalization Guide](docs/guides/internationalization.md) to add your language.
+
+---
+
+## 📊 Logging System
+
+Clean console by default, with optional verbose output:
+
 ```bash
+# Clean console (logs to file only) - DEFAULT
+python main.py "URL" ./downloads
+
+# Show logs in console (verbose)
+python main.py "URL" ./downloads -v    # INFO level
+python main.py "URL" ./downloads -vv   # DEBUG level
+python main.py "URL" ./downloads -vvv  # DEBUG + third-party
+
+# Force quiet (even with -v)
+python main.py "URL" ./downloads -v --quiet
+```
+
+**Log Files:**
+- Default: `download.log`
+- Custom: `--log-file path/to/file.log`
+- Rotation: `--log-rotate` (10MB files, keeps 5)
+
+See [Logging Guide](docs/guides/logging.md) for complete documentation.
+
+---
+
+## 🏗️ Architecture
+
+### Core Modules
+- `main.py` - Entry point and orchestration
+- `downloader.py` - Download logic (standard, view-only, OCR)
+- `auth_drive.py` - Google Drive authentication
+- `checkpoint.py` - Pause/resume system
+- `validators.py` - Input validation
+- `logger.py` - Advanced logging system
+- `i18n.py` - Internationalization
+- `ui.py` - Rich console interface
+- `config.py` - Global configuration
+
+### Language Files
+- `lang/en.lang` - English translations
+- `lang/pt.lang` - Portuguese translations
+
+See [Architecture Guide](docs/developer/architecture.md) for detailed system design.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! See [Contributing Guide](docs/developer/contributing.md) for:
+
+- Development setup
+- Code standards
+- Pull request process
+- Adding translations
+
+### Quick Development Setup
+```bash
+# Clone and setup
+git clone https://github.com/your-repo/gd-downloader.git
+cd gd-downloader
+pip install -r requirements.txt
+
+# Run with debug
+python main.py "URL" ./downloads -vv
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**1. "credentials.json not found"**
+- Follow [Setup Guide](docs/user/setup.md#google-drive-setup)
+
+**2. "FFmpeg not found"**
+- Install FFmpeg for view-only videos
+- See [Setup Guide](docs/user/setup.md#ffmpeg-installation)
+
+**3. Characters look weird in console**
+- Windows: Use Windows Terminal or `chcp 65001`
+- Or use: `--no-color` flag
+
+**4. Tesseract not found (OCR)**
+```bash
+# Windows
+# Download: https://github.com/UB-Mannheim/tesseract/wiki
+
 # Linux
-sudo apt install ffmpeg
+sudo apt-get install tesseract-ocr
 
-# macOS
-brew install ffmpeg
-
-# Windows: Baixe e adicione ao PATH
+# Mac
+brew install tesseract
 ```
 
-### Downloads lentos
-
-**Soluções:**
-```bash
-# Aumente workers
-python main.py "URL" ./downloads --workers 15
-
-# Use aceleração GPU (para vídeos)
-python main.py "URL" ./downloads --gpu nvidia --workers 15
-```
-
-### Checkpoint corrompido
-
-**Solução:**
-```bash
-python main.py "URL" ./downloads --clear-checkpoint
-```
-
-### Erro 403 (Forbidden)
-
-**Causa**: Arquivo não tem permissão de download
-
-**Não há solução técnica** - É uma restrição do proprietário
-
-### Vídeo não baixa ou fica corrompido
-
-**Soluções:**
-1. Tente com aceleração GPU: `--gpu nvidia`
-2. Verifique se FFmpeg está atualizado
-3. Use `--debug-html` para investigar
-4. Alguns vídeos têm proteção DRM (não há solução)
+See [Troubleshooting Guide](docs/guides/troubleshooting.md) for complete solutions.
 
 ---
 
-## 📈 Performance
+## 📝 License
 
-### Benchmarks (aproximados)
-
-| Tipo | Workers | Velocidade | Observação |
-|------|---------|------------|------------|
-| Arquivos padrão | 5 | ~50 MB/s | Depende da conexão |
-| Arquivos padrão | 15 | ~100 MB/s | Máximo prático |
-| Vídeos view-only | 10 | ~20 MB/s | Limitado pelo servidor |
-| PDFs view-only | 1 | ~2 MB/min | Captura de tela |
-
-### Recomendações
-
-- **Arquivos pequenos** (<10MB): Use mais workers (15-20)
-- **Arquivos grandes** (>100MB): Use menos workers (5-10)
-- **Vídeos view-only**: Use aceleração GPU
-- **Conexão lenta**: Reduza workers para 3-5
+MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🔒 Segurança e Privacidade
+## ⚠️ Disclaimer
 
-### Dados Locais
+This tool is provided "as is" without warranty. The developers:
+- Are NOT responsible for misuse
+- Do NOT encourage ToS violations
+- Recommend using only for authorized purposes
 
-✅ **Armazenados localmente**:
-- `credentials.json` - Suas credenciais
-- `token.json` - Token de autenticação
-- `.checkpoints/` - Progresso de downloads
-
-❌ **NUNCA compartilhe estes arquivos!**
-
-### O que NÃO fazemos
-
-- ✅ Não enviamos dados para servidores externos
-- ✅ Não coletamos informações pessoais
-- ✅ Não registramos histórico de downloads
-- ✅ Autenticação via OAuth 2.0 oficial do Google
-
-### Escopo de Permissões
-
-O aplicativo usa escopo **readonly**:
-```python
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-```
-
-**Significa**: Apenas leitura, não pode modificar ou deletar arquivos
+**Use ethically and responsibly.**
 
 ---
 
-## 🤝 Contribuindo
-
-### Como Contribuir
-
-1. Fork o projeto
-2. Crie uma branch: `git checkout -b feature/nova-feature`
-3. Commit suas mudanças: `git commit -m 'Adiciona nova feature'`
-4. Push para a branch: `git push origin feature/nova-feature`
-5. Abra um Pull Request
-
-### Diretrizes
-
-- ✅ Adicione testes para novas funcionalidades
-- ✅ Mantenha compatibilidade com Python 3.8+
-- ✅ Siga PEP 8 (style guide)
-- ✅ Atualize documentação
-- ✅ Adicione type hints
-
----
-
-## 📝 Changelog
-
-### Versão 2.0 (2025-10-02)
-
-#### ✨ Novos Recursos
-- Sistema de validação de entrada completo
-- Exceções personalizadas padronizadas
-- Thread-safe checkpoint manager
-- Aviso legal integrado
-- Sanitização de logs (tokens não vazam)
-
-#### 🔧 Melhorias
-- Interface visual rica (Rich)
-- Combinação de filtros (`--only-videos` + `--only-view-only`)
-- Validação robusta de URLs
-- Melhor tratamento de erros
-
-#### 🐛 Correções
-- Race condition em checkpoints corrigida
-- Logs não expõem tokens de autenticação
-- Validação de credenciais aprimorada
-- Melhor detecção de FFmpeg
-
-### Versão 1.0 (Original)
-- Download básico de arquivos
-- Sistema de checkpoint simples
-- Suporte a vídeos view-only
-
----
-
-## 📄 Licença
-
-Este projeto está licenciado sob a **MIT License**.
-
-```
-MIT License
-
-Copyright (c) 2025 GD-Downloader Contributors
-
-É concedida permissão, gratuitamente, a qualquer pessoa que obtenha
-uma cópia deste software, para usar, copiar, modificar, mesclar,
-publicar, distribuir, sublicenciar e/ou vender cópias do Software.
-
-SEM GARANTIAS DE QUALQUER TIPO, expressas ou implícitas.
-```
-
-Veja [LICENSE](LICENSE) para o texto completo.
-
----
-
-## ⚖️ Disclaimer
-
-**USO POR SUA CONTA E RISCO**
-
-- Este software é fornecido "como está"
-- Sem garantias de qualquer tipo
-- Os desenvolvedores não se responsabilizam por danos
-- Leia [LEGAL_NOTICE.md](LEGAL_NOTICE.md) antes de usar
-
----
-
-## 🌟 Suporte
-
-### Documentação
-
-- 📖 [Guia de Instalação](requirements_and_setup.md)
-- 📖 [Sistema de Checkpoint](checkpoint_usage_guide.md)
-- 📖 [Interface Visual](interface_guide.md)
-- 📖 [Notas Técnicas](technical_notes.md)
-
-### Problemas?
-
-1. Verifique `download.log` para detalhes
-2. Consulte a seção [Troubleshooting](#%EF%B8%8F-troubleshooting)
-3. Leia as [Issues no GitHub](https://github.com/seu-usuario/gd-downloader/issues)
-4. Abra uma nova Issue (se necessário)
-
-### Comunidade
-
-- 💬 [Discussions](https://github.com/seu-usuario/gd-downloader/discussions)
-- 🐛 [Report Bugs](https://github.com/seu-usuario/gd-downloader/issues)
-- ✨ [Request Features](https://github.com/seu-usuario/gd-downloader/issues)
-
----
-
-## 🙏 Agradecimentos
+## 🙏 Acknowledgments
 
 - Google Drive API
-- FFmpeg Project
-- Rich (biblioteca de terminal)
-- Comunidade Python
-- Todos os contribuidores
+- Playwright & Selenium teams
+- OCRmyPDF & Tesseract projects
+- Rich library for beautiful CLI
+- Community contributors
 
 ---
 
-## 📞 Contato
+## 📊 Project Stats
 
-**Importante**: Para relatar uso indevido ou violação de direitos, **NÃO** entre em contato com os desenvolvedores. Entre em contato com:
-
-- Google Drive: https://support.google.com/drive/answer/2463296
-- Autoridades competentes em sua jurisdição
+- **Language**: Python 3.8+
+- **Lines of Code**: ~4,000
+- **Documentation**: 15+ guides
+- **Supported Languages**: 2 (EN, PT)
+- **Status**: Stable
 
 ---
 
-<div align="center">
+**Made with ❤️ for the community**
 
-**Feito com ❤️ para a comunidade**
-
-[⬆ Voltar ao topo](#-gd-downloader)
-
-</div>
+*Last updated: 2025-10-07*
