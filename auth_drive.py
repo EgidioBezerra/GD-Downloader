@@ -1,6 +1,8 @@
 # auth_drive.py
 import os.path
+import json
 import logging
+import stat
 from typing import Optional, Tuple
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -19,19 +21,98 @@ class CredentialsError(Exception):
     pass
 
 
-def _sanitize_token_for_log(token: str) -> str:
+def _sanitize_for_logging(data: dict, sensitive_keys: list = None) -> dict:
     """
-    Sanitiza token para logs, mostrando apenas os primeiros caracteres.
+    Sanitiza dados sensíveis para logging.
     
     Args:
-        token: Token completo
+        data: Dicionário de dados
+        sensitive_keys: Lista de chaves sensíveis
         
     Returns:
-        Token parcialmente mascarado
+        Dicionário com dados sensíveis mascarados
     """
-    if not token or len(token) < 10:
-        return "***"
-    return f"{token[:10]}...***"
+    if sensitive_keys is None:
+        sensitive_keys = ['token', 'refresh_token', 'client_secret', 'access_token']
+    
+    sanitized = data.copy()
+    for key in sensitive_keys:
+        if key in sanitized:
+            value = str(sanitized[key])
+            if len(value) > 8:
+                sanitized[key] = f"{value[:8]}...***"
+            else:
+                sanitized[key] = "***"
+    
+    return sanitized
+
+
+def _validate_credentials_file(file_path: str) -> bool:
+    """
+    Valida arquivo de credenciais quanto a permissões e formato.
+    
+    Args:
+        file_path: Caminho do arquivo de credenciais
+        
+    Returns:
+        True se válido, False caso contrário
+    """
+    try:
+        # Verifica permissões do arquivo
+        file_stat = os.stat(file_path)
+        file_mode = file_stat.st_mode
+        
+        # Verifica se arquivo tem permissões muito abertas
+        if file_mode & stat.S_IROTH:  # Others readable
+            logging.warning(f"Arquivo de credenciais legível por outros usuários: {file_path}")
+            return False
+        
+        if file_mode & stat.S_IWOTH:  # Others writable
+            logging.warning(f"Arquivo de credenciais gravável por outros usuários: {file_path}")
+            return False
+        
+        # Valida formato JSON
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Verifica campos obrigatórios
+        if 'installed' not in data:
+            if 'web' not in data:  # OAuth 2.0 Client ID for web applications
+                return False
+            data_key = 'web'
+        else:
+            data_key = 'installed'
+        
+        required_fields = ['client_id', 'client_secret', 'auth_uri', 'token_uri']
+        client_data = data[data_key]
+        
+        return all(field in client_data for field in required_fields)
+        
+    except json.JSONDecodeError:
+        logging.error(f"Arquivo de credenciais JSON inválido: {file_path}")
+        return False
+    except Exception as e:
+        logging.error(f"Erro ao validar arquivo de credenciais: {e}")
+        return False
+
+
+def _secure_file_permissions(file_path: str) -> bool:
+    """
+    Define permissões seguras para arquivo sensível.
+    
+    Args:
+        file_path: Caminho do arquivo
+        
+    Returns:
+        True se sucesso, False caso contrário
+    """
+    try:
+        # Define permissões: read/write para owner apenas
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+        return True
+    except Exception as e:
+        logging.warning(f"Não foi possível definir permissões seguras para {file_path}: {e}")
+        return False
 
 
 def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
@@ -51,6 +132,10 @@ def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
     # Tenta carregar credenciais existentes
     if os.path.exists('token.json'):
         try:
+            # Valida permissões do arquivo
+            if not _validate_credentials_file('token.json'):
+                logging.warning("Arquivo token.json com permissões inseguras")
+            
             creds = Credentials.from_authorized_user_file('token.json', SCOPES)
             logging.info("Credenciais carregadas de token.json")
         except Exception as e:
@@ -67,9 +152,10 @@ def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
             try:
                 creds.refresh(Request())
                 
-                # Log sanitizado
-                safe_token = _sanitize_token_for_log(creds.token)
-                logging.info(f"Token de acesso atualizado: {safe_token}")
+                # Log com dados sanitizados
+                creds_dict = json.loads(creds.to_json())
+                sanitized_creds = _sanitize_for_logging(creds_dict)
+                logging.info(f"Token de acesso atualizado: {sanitized_creds}")
                 
             except Exception as e:
                 error_msg = (
@@ -83,11 +169,20 @@ def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
             if not os.path.exists('credentials.json'):
                 error_msg = (
                     "ERRO CRÍTICO: O arquivo 'credentials.json' não foi encontrado.\n"
-                    "Por favor, siga as instruções em requirements_and_setup.md "
+                    "Por favor, siga as instruções em docs/user/setup.md "
                     "para configurar suas credenciais do Google Cloud."
                 )
                 logging.critical(error_msg)
                 raise FileNotFoundError(error_msg)
+            
+            # Valida arquivo de credenciais
+            if not _validate_credentials_file('credentials.json'):
+                error_msg = (
+                    f"ERRO CRÍTICO: Arquivo credentials.json inválido ou inseguro.\n"
+                    f"Verifique o formato e as permissões do arquivo."
+                )
+                logging.critical(error_msg)
+                raise CredentialsError(error_msg)
             
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -104,9 +199,17 @@ def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
         
         # Salva credenciais para próxima execução
         try:
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
-            logging.info("Credenciais salvas em token.json")
+            with open('token.json', 'w', encoding='utf-8') as token_file:
+                token_file.write(creds.to_json())
+            
+            # Define permissões seguras
+            _secure_file_permissions('token.json')
+            
+            # Log com dados sanitizados
+            creds_dict = json.loads(creds.to_json())
+            sanitized_creds = _sanitize_for_logging(creds_dict)
+            logging.info(f"Credenciais salvas em token.json: {sanitized_creds}")
+            
         except Exception as e:
             logging.warning(f"Não foi possível salvar token.json: {e}")
 
@@ -114,9 +217,10 @@ def get_drive_service() -> Tuple[Optional[Resource], Optional[Credentials]]:
     try:
         service = build('drive', 'v3', credentials=creds)
         
-        # Log sanitizado
-        safe_token = _sanitize_token_for_log(creds.token)
-        logging.info(f"Serviço do Google Drive autenticado: token={safe_token}")
+        # Log com dados sanitizados
+        creds_dict = json.loads(creds.to_json())
+        sanitized_creds = _sanitize_for_logging(creds_dict)
+        logging.info(f"Serviço do Google Drive autenticado com sucesso: {sanitized_creds}")
         
         return service, creds
         

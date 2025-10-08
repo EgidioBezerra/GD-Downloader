@@ -31,6 +31,8 @@ TO-DO.txt
 .claude/
 .crush/
 CRUSH.md
+test_checkpoints/
+test_downloads/
 __pycache__/
 temp_pdf_downloads/
 Downloads/
