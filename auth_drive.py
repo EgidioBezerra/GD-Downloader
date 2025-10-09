@@ -50,46 +50,56 @@ def _sanitize_for_logging(data: dict, sensitive_keys: list = None) -> dict:
 def _validate_credentials_file(file_path: str) -> bool:
     """
     Valida arquivo de credenciais quanto a permissões e formato.
-    
+
     Args:
         file_path: Caminho do arquivo de credenciais
-        
+
     Returns:
         True se válido, False caso contrário
     """
     try:
-        # Verifica permissões do arquivo
-        file_stat = os.stat(file_path)
-        file_mode = file_stat.st_mode
-        
-        # Verifica se arquivo tem permissões muito abertas
-        if file_mode & stat.S_IROTH:  # Others readable
-            logging.warning(f"Arquivo de credenciais legível por outros usuários: {file_path}")
-            return False
-        
-        if file_mode & stat.S_IWOTH:  # Others writable
-            logging.warning(f"Arquivo de credenciais gravável por outros usuários: {file_path}")
-            return False
-        
+        # Verifica permissões do arquivo apenas em sistemas Unix-like
+        if os.name != 'nt':  # Não é Windows
+            file_stat = os.stat(file_path)
+            file_mode = file_stat.st_mode
+
+            # Verifica se arquivo tem permissões muito abertas
+            if file_mode & stat.S_IROTH:  # Others readable
+                logging.warning(f"Arquivo de credenciais legível por outros usuários: {file_path}")
+                return False
+
+            if file_mode & stat.S_IWOTH:  # Others writable
+                logging.warning(f"Arquivo de credenciais gravável por outros usuários: {file_path}")
+                return False
+
         # Valida formato JSON
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         # Verifica campos obrigatórios
         if 'installed' not in data:
             if 'web' not in data:  # OAuth 2.0 Client ID for web applications
+                logging.error(f"Estrutura do arquivo inválida: faltam chaves 'installed' ou 'web'")
                 return False
             data_key = 'web'
         else:
             data_key = 'installed'
-        
+
         required_fields = ['client_id', 'client_secret', 'auth_uri', 'token_uri']
         client_data = data[data_key]
-        
-        return all(field in client_data for field in required_fields)
-        
-    except json.JSONDecodeError:
-        logging.error(f"Arquivo de credenciais JSON inválido: {file_path}")
+
+        missing_fields = [field for field in required_fields if field not in client_data]
+        if missing_fields:
+            logging.error(f"Campos obrigatórios ausentes: {missing_fields}")
+            return False
+
+        return True
+
+    except json.JSONDecodeError as e:
+        logging.error(f"Arquivo de credenciais JSON inválido: {file_path} - {e}")
+        return False
+    except KeyError as e:
+        logging.error(f"Estrutura do arquivo de credenciais inválida: {e}")
         return False
     except Exception as e:
         logging.error(f"Erro ao validar arquivo de credenciais: {e}")
@@ -99,16 +109,21 @@ def _validate_credentials_file(file_path: str) -> bool:
 def _secure_file_permissions(file_path: str) -> bool:
     """
     Define permissões seguras para arquivo sensível.
-    
+
     Args:
         file_path: Caminho do arquivo
-        
+
     Returns:
         True se sucesso, False caso contrário
     """
     try:
-        # Define permissões: read/write para owner apenas
-        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+        # Define permissões: read/write para owner apenas (apenas em sistemas Unix-like)
+        if os.name != 'nt':  # Não é Windows
+            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+        else:
+            # No Windows, as permissões são gerenciadas pelo sistema de ACLs
+            # Esta função não define permissões no Windows
+            logging.debug(f"Permissões de arquivo gerenciadas pelo Windows para: {file_path}")
         return True
     except Exception as e:
         logging.warning(f"Não foi possível definir permissões seguras para {file_path}: {e}")
